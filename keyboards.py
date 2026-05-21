@@ -2,7 +2,7 @@ from telegram import (
     ReplyKeyboardMarkup, ReplyKeyboardRemove,
     KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton,
 )
-from config import FILIALLAR, LAVOZIMLAR
+from config import FILIALLAR, LAVOZIMLAR, PAGE_SIZE
 
 
 def lavozim_kb() -> ReplyKeyboardMarkup:
@@ -51,6 +51,7 @@ def admin_kb() -> ReplyKeyboardMarkup:
             ["📊 Statistika",              "👥 Xodimlar"],
             ["⏳ Kutilayotgan so'rovlar",  "🚫 Bloklanganlar"],
             ["📝 Xodimni Tahrirlash",      "📥 Excel Eksport"],
+            ["🔍 Xodim Qidirish"],
         ],
         resize_keyboard=True,
     )
@@ -61,6 +62,17 @@ def edit_field_kb() -> ReplyKeyboardMarkup:
         [["Ism", "Lavozim"], ["Kod", "Filial"], ["❌ Bekor qilish"]],
         resize_keyboard=True, one_time_keyboard=True,
     )
+
+
+def xodimlar_page_inline(page: int, total: int) -> InlineKeyboardMarkup | None:
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"xod_page_{page - 1}"))
+    if (page + 1) * PAGE_SIZE < total:
+        buttons.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"xod_page_{page + 1}"))
+    if not buttons:
+        return None
+    return InlineKeyboardMarkup([buttons])
 
 
 def sorov_inline(task_id: int) -> InlineKeyboardMarkup:

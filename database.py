@@ -121,6 +121,22 @@ async def update_xodim_field(user_id: int, field: str, value: str):
         await db.commit()
 
 
+async def search_xodimlar(query: str) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        if query.isdigit():
+            async with db.execute(
+                "SELECT ism, lavozim, filial, kod, user_id FROM xodimlar WHERE user_id=?",
+                (int(query),)
+            ) as cur:
+                return await cur.fetchall()
+        else:
+            async with db.execute(
+                "SELECT ism, lavozim, filial, kod, user_id FROM xodimlar WHERE ism LIKE ?",
+                (f"%{query}%",)
+            ) as cur:
+                return await cur.fetchall()
+
+
 async def get_approved_xodimlar() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(

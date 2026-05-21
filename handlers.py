@@ -10,14 +10,14 @@ from telegram.ext import ContextTypes, ConversationHandler
 import database as db
 from keyboards import (
     lavozim_kb, filial_kb, telefon_kb, telefon2_kb, remove_kb,
-    admin_kb, edit_field_kb,
+    admin_kb, edit_field_kb, xodimlar_page_inline,
     sorov_inline, bajarildi_inline, tasdiq_inline, unblock_inline,
 )
 from utils import is_topic_valid, check_sla_timeout, generate_excel
 from config import (
-    ADMIN_ID, GROUP_CHAT_ID, FILIALLAR, LAVOZIMLAR, SLA_TIMEOUT_SEC,
+    ADMIN_ID, GROUP_CHAT_ID, FILIALLAR, LAVOZIMLAR, SLA_TIMEOUT_SEC, PAGE_SIZE,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
-    EDIT_USER, EDIT_FIELD, EDIT_VALUE,
+    EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,9 +35,18 @@ def admin_only(func):
 # ══════════════════════════════════════════════
 # START VA RO'YXATDAN O'TISH OQIMI
 # ══════════════════════════════════════════════
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("❌ Bekor qilindi.", reply_markup=remove_kb())
+    return ConversationHandler.END
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    await context.bot.set_my_commands([BotCommand("start", "Botni qayta ishga tushirish")])
+    await context.bot.set_my_commands([
+        BotCommand("start",  "Botni qayta ishga tushirish"),
+        BotCommand("cancel", "Jarayonni bekor qilish"),
+    ])
 
     if uid == ADMIN_ID:
         await update.message.reply_text(
@@ -296,7 +305,12 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.job_queue.run_once(
             check_sla_timeout,
             when=SLA_TIMEOUT_SEC,
-            data={"task_id": task_id, "topic_id": topic_id, "x_ism": ism},
+            data={"task_id": task_id, "topic_id": topic_id, "x_ism": ism, "reminder": 1},
+        )
+        context.job_queue.run_once(
+            check_sla_timeout,
+            when=SLA_TIMEOUT_SEC * 2,
+            data={"task_id": task_id, "topic_id": topic_id, "x_ism": ism, "reminder": 2},
         )
 
     except BadRequest as e:
@@ -418,6 +432,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
+    # ── Xodimlar sahifalash ───────────────────────────────────────
+    if data.startswith("xod_page_"):
+        page = int(data.split("_")[2])
+        rows = await db.get_approved_xodimlar()
+        if not rows:
+            await query.edit_message_text("👥 Tizimda faol xodimlar hozircha yo'q.")
+            return
+        total = len(rows)
+        start = page * PAGE_SIZE
+        end   = min(start + PAGE_SIZE, total)
+        matn  = f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
+        for r in rows[start:end]:
+            matn += f"👤 *{r[0]}* | {r[1]} | Kod: `{r[3]}` | ID: `{r[4]}`\n"
+        await query.edit_message_text(
+            matn,
+            parse_mode="Markdown",
+            reply_markup=xodimlar_page_inline(page, total),
+        )
+        return
+
     # ── Vazifa holati ─────────────────────────────────────────────
     if data.startswith(("prog_", "done_")):
         action, task_id = data.split("_", 1)[0], int(data.split("_", 1)[1])
@@ -474,16 +508,23 @@ async def admin_statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _send_xodimlar_page(send_fn, rows: list, page: int):
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end   = min(start + PAGE_SIZE, total)
+    matn  = f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
+    for r in rows[start:end]:
+        matn += f"👤 *{r[0]}* | {r[1]} | Kod: `{r[3]}` | ID: `{r[4]}`\n"
+    await send_fn(matn, parse_mode="Markdown", reply_markup=xodimlar_page_inline(page, total))
+
+
 @admin_only
 async def admin_xodimlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = await db.get_approved_xodimlar()
     if not rows:
         await update.message.reply_text("👥 Tizimda faol xodimlar hozircha yo'q.")
         return
-    matn = "👥 *Tizimdagi faol xodimlar ro'yxati:*\n\n"
-    for r in rows:
-        matn += f"👤 *{r[0]}* | {r[1]} | Kod: `{r[3]}` | ID: `{r[4]}`\n"
-    await update.message.reply_text(matn, parse_mode="Markdown")
+    await _send_xodimlar_page(update.message.reply_text, rows, page=0)
 
 
 @admin_only
@@ -601,4 +642,37 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         pass
+    return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════
+# XODIM QIDIRISH OQIMI (ADMIN)
+# ══════════════════════════════════════════════
+@admin_only
+async def admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔍 Xodimning *ismi* yoki *Telegram ID* sini kiriting:",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return SEARCH_QUERY
+
+
+async def search_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text.strip()
+    rows  = await db.search_xodimlar(query)
+
+    if not rows:
+        await update.message.reply_text(
+            f"❌ *'{query}'* bo'yicha hech qanday xodim topilmadi.",
+            parse_mode="Markdown",
+            reply_markup=admin_kb(),
+        )
+        return ConversationHandler.END
+
+    matn = f"🔍 *'{query}' bo'yicha natijalar ({len(rows)} ta):*\n\n"
+    for r in rows:
+        matn += f"👤 *{r[0]}* | {r[1]} | 🏢 {r[2]} | Kod: `{r[3]}` | ID: `{r[4]}`\n"
+
+    await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=admin_kb())
     return ConversationHandler.END

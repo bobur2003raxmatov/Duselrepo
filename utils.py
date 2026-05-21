@@ -32,14 +32,16 @@ async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
     task_id  = job.data["task_id"]
     topic_id = job.data["topic_id"]
     x_ism    = job.data["x_ism"]
+    reminder = job.data.get("reminder", 1)
 
     row = await get_xabar(task_id)
     if not row or row[3] != "kutilmoqda":
         return
 
+    minutes = 15 * reminder
     ogohlantirish = (
-        f"🚨 *DIQQAT! #SLA Nazorati*\n\n"
-        f"⚠️ #{task_id}-sonli topshiriq kelganiga *15 daqiqa* bo'ldi, "
+        f"🚨 *DIQQAT! #SLA Nazorati ({reminder}-eslatma)*\n\n"
+        f"⚠️ #{task_id}-sonli topshiriq kelganiga *{minutes} daqiqa* bo'ldi, "
         f"biroq haligacha belgilanmadi!\n"
         f"👤 Xodim: {x_ism}"
     )
@@ -60,6 +62,34 @@ async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e:
             logger.error(f"Topic SLA xabari yuborishda xato: {e}")
+
+
+async def daily_report_job(context: ContextTypes.DEFAULT_TYPE):
+    from database import get_statistika, get_kunlik_statistika
+    stat   = await get_statistika()
+    kunlik = await get_kunlik_statistika()
+    today  = datetime.now().strftime("%d.%m.%Y")
+
+    matn = (
+        f"📅 *{today} — Kunlik Hisobot*\n\n"
+        f"📥 Jami xabarlar: *{stat['jami']}*\n"
+        f"✅ Bajarilgan: *{stat['bajarilgan']}*\n"
+        f"⏳ Kutilmoqda: *{stat['kutilmoqda']}*\n"
+        f"⏱ O'rtacha vaqt: *{stat['ortacha']} daqiqa*"
+    )
+    if kunlik:
+        matn += "\n\n*📊 Bugungi faollik:*\n"
+        for row in kunlik:
+            matn += f"• {row[0]} ({row[1]}): {row[2]} ta, {row[3]} bajarildi\n"
+    else:
+        matn += "\n\n_Bugun hech qanday faollik yo'q._"
+
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID, text=matn, parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Kunlik hisobot yuborishda xato: {e}")
 
 
 async def generate_excel(x_data: list, m_data: list) -> str:

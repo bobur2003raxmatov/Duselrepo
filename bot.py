@@ -1,4 +1,5 @@
 import logging
+import datetime
 
 from telegram.ext import (
     Application,
@@ -12,11 +13,12 @@ from telegram.ext import (
 from config import (
     TOKEN,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
-    EDIT_USER, EDIT_FIELD, EDIT_VALUE,
+    EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
 )
 from database import init_db
+from utils import daily_report_job
 from handlers import (
-    start,
+    start, cancel,
     ism_olish, lavozim_olish, kod_olish,
     filial_olish, telefon_olish, telefon2_olish,
     tugilgan_kun_olish,
@@ -26,18 +28,26 @@ from handlers import (
     admin_statistika, admin_xodimlar,
     admin_kutilayotganlar, admin_bloklanganlar,
     admin_excel_eksport,
+    admin_search, search_query_handler,
     start_edit, edit_user_id, edit_field, edit_value,
 )
 
+# ── Logging: console + file ───────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("bot.log", encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
 
 def build_application() -> Application:
     app = Application.builder().token(TOKEN).build()
+
+    cancel_cmd = CommandHandler("cancel", cancel)
 
     # ── Ro'yxatdan o'tish ConversationHandler ────────────────────
     royxat_conv = ConversationHandler(
@@ -54,7 +64,7 @@ def build_application() -> Application:
             ],
             TUGILGAN_KUN: [MessageHandler(filters.TEXT & ~filters.COMMAND, tugilgan_kun_olish)],
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[cancel_cmd, CommandHandler("start", start)],
         allow_reentry=True,
     )
 
@@ -66,12 +76,24 @@ def build_application() -> Application:
             EDIT_FIELD: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_field)],
             EDIT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value)],
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        allow_reentry=True,
+    )
+
+    # ── Xodim qidirish ConversationHandler ──────────────────────
+    qidiruv_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex(r"^🔍 Xodim Qidirish$"), admin_search)],
+        states={
+            SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_query_handler)],
+        },
+        fallbacks=[cancel_cmd, CommandHandler("start", start)],
         allow_reentry=True,
     )
 
     app.add_handler(royxat_conv)
     app.add_handler(tahrir_conv)
+    app.add_handler(qidiruv_conv)
+    app.add_handler(cancel_cmd)
 
     app.add_handler(MessageHandler(filters.Regex(r"^📊 Statistika$"),             admin_statistika))
     app.add_handler(MessageHandler(filters.Regex(r"^👥 Xodimlar$"),               admin_xodimlar))
@@ -88,6 +110,14 @@ def build_application() -> Application:
 async def post_init(app: Application):
     await init_db()
     logger.info("✅ Ma'lumotlar bazasi tayyor.")
+
+    # Daily report at 09:00 Tashkent time (UTC+5)
+    tz_uz = datetime.timezone(datetime.timedelta(hours=5))
+    app.job_queue.run_daily(
+        daily_report_job,
+        time=datetime.time(hour=9, minute=0, tzinfo=tz_uz),
+    )
+    logger.info("✅ Kunlik hisobot rejalashtirildi: 09:00 (UTC+5)")
 
 
 async def error_handler(update: object, context) -> None:
