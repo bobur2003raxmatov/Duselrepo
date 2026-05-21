@@ -6,7 +6,11 @@
       "Bash(venv/bin/python *)",
       "Bash(pkill -f \"venv/bin/python bot.py\")",
       "Bash(git init *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git remote *)",
+      "Bash(git push *)"
     ]
   }
 }
