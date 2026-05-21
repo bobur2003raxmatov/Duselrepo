@@ -57,6 +57,31 @@ def admin_kb() -> ReplyKeyboardMarkup:
     )
 
 
+def edit_select_kb(rows: list, page: int) -> InlineKeyboardMarkup:
+    """Paginated employee selector for the edit flow."""
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end   = min(start + PAGE_SIZE, total)
+
+    buttons = []
+    for r in rows[start:end]:
+        # rows: (ism, lavozim, filial, kod, user_id)
+        buttons.append([InlineKeyboardButton(
+            f"👤 {r[0]} — {r[1]} | {r[2]}",
+            callback_data=f"edit_select_{r[4]}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"edit_page_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"edit_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    return InlineKeyboardMarkup(buttons)
+
+
 def edit_field_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [["Ism", "Lavozim"], ["Kod", "Filial"], ["❌ Bekor qilish"]],

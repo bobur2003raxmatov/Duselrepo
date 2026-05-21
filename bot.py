@@ -29,7 +29,7 @@ from handlers import (
     admin_kutilayotganlar, admin_bloklanganlar,
     admin_excel_eksport,
     admin_search, search_query_handler,
-    start_edit, edit_user_id, edit_field, edit_value,
+    start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
 )
 
 # ── Logging: console + file ───────────────────────────────────────
@@ -72,12 +72,17 @@ def build_application() -> Application:
     tahrir_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex(r"^📝 Xodimni Tahrirlash$"), start_edit)],
         states={
-            EDIT_USER:  [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_user_id)],
+            EDIT_USER: [
+                CallbackQueryHandler(edit_select_user, pattern="^edit_select_"),
+                CallbackQueryHandler(edit_page,        pattern="^edit_page_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_search),
+            ],
             EDIT_FIELD: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_field)],
             EDIT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value)],
         },
         fallbacks=[cancel_cmd, CommandHandler("start", start)],
         allow_reentry=True,
+        per_message=False,
     )
 
     # ── Xodim qidirish ConversationHandler ──────────────────────

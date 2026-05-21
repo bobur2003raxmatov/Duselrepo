@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 import database as db
 from keyboards import (
     lavozim_kb, filial_kb, telefon_kb, telefon2_kb, remove_kb,
-    admin_kb, edit_field_kb, xodimlar_page_inline,
+    admin_kb, edit_field_kb, edit_select_kb, xodimlar_page_inline,
     sorov_inline, bajarildi_inline, tasdiq_inline, unblock_inline,
 )
 from utils import is_topic_valid, check_sla_timeout, generate_excel
@@ -576,33 +576,72 @@ async def admin_excel_eksport(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ══════════════════════════════════════════════
 @admin_only
 async def start_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = await db.get_approved_xodimlar()
+    if not rows:
+        await update.message.reply_text("👥 Tahrirlash uchun faol xodimlar yo'q.", reply_markup=admin_kb())
+        return ConversationHandler.END
+    context.user_data["edit_rows"] = rows
     await update.message.reply_text(
-        "📝 Tahrirlash uchun xodimning *Telegram User ID* raqamini kiriting:\n"
-        "_(IDni '👥 Xodimlar' ro'yxatidan olishingiz mumkin)_",
+        f"📝 Xodimni tanlang yoki ismini yozing:\n_(Jami: {len(rows)} ta xodim)_",
         parse_mode="Markdown",
-        reply_markup=remove_kb(),
+        reply_markup=edit_select_kb(rows, page=0),
     )
     return EDIT_USER
 
 
-async def edit_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if not text.isdigit():
-        await update.message.reply_text("❌ ID faqat raqamlardan iborat. Qayta kiriting:")
-        return EDIT_USER
-    target_uid = int(text)
+async def edit_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.split("_")[2])
+    rows = context.user_data.get("edit_rows") or await db.get_approved_xodimlar()
+    context.user_data["edit_rows"] = rows
+    await query.edit_message_reply_markup(reply_markup=edit_select_kb(rows, page))
+    return EDIT_USER
+
+
+async def edit_select_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    target_uid = int(query.data.split("_")[2])
+
     row = await db.get_xodim(target_uid)
     if not row:
-        await update.message.reply_text("❌ Bunday IDga ega xodim bazadan topilmadi. Qayta kiriting:")
-        return EDIT_USER
+        await query.edit_message_text("❌ Xodim topilmadi.")
+        return ConversationHandler.END
+
+    _, _, ism, lavozim, filial, _ = row
     context.user_data["edit_uid"] = target_uid
-    _, _, ism, lavozim, *_ = row
-    await update.message.reply_text(
-        f"👤 Xodim: *{ism}* ({lavozim})\n\nQaysi ma'lumotni o'zgartirmoqchisiz?",
+
+    await query.edit_message_text(
+        f"✅ *{ism}* ({lavozim} | {filial}) tanlandi.",
         parse_mode="Markdown",
+    )
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Qaysi ma'lumotni o'zgartirmoqchisiz?",
         reply_markup=edit_field_kb(),
     )
     return EDIT_FIELD
+
+
+async def edit_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    search_text = update.message.text.strip()
+    rows = await db.search_xodimlar(search_text)
+
+    if not rows:
+        await update.message.reply_text(
+            f"❌ *'{search_text}'* bo'yicha xodim topilmadi. Qayta kiriting:",
+            parse_mode="Markdown",
+        )
+        return EDIT_USER
+
+    context.user_data["edit_rows"] = rows
+    await update.message.reply_text(
+        f"🔍 *{len(rows)} ta* natija topildi. Birini tanlang:",
+        parse_mode="Markdown",
+        reply_markup=edit_select_kb(rows, page=0),
+    )
+    return EDIT_USER
 
 
 async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
