@@ -2,7 +2,7 @@ TOKEN         = "8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8"
 ADMIN_ID      = 7839267271
 GROUP_CHAT_ID = -1003802115020
 
-DB_PATH = "dusel_company.db"
+DB_PATH = "/data/dusel_company.db"
 
 FILIALLAR = [
     "Namangan Tools", "Navoiy Tools", "Qashqadaryo Tools", "Samarqand Tools",

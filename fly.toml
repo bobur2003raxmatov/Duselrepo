@@ -14,3 +14,7 @@ primary_region = "ams"
 
 [deploy]
   strategy = "immediate"
+
+[[mounts]]
+  source = "dusel_data"
+  destination = "/data"
