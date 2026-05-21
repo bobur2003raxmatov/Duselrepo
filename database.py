@@ -167,6 +167,16 @@ async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id) -> int:
         return cur.lastrowid
 
 
+async def get_xodim_by_topic(topic_id: int) -> tuple | None:
+    """Returns (user_id, ism) for the employee who owns this topic."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, ism FROM xodimlar WHERE topic_id=? AND status='approved'",
+            (topic_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
 async def get_xabar(task_id: int) -> tuple | None:
     """Returns (user_id, xodim_name, msg_id, holat)"""
     async with aiosqlite.connect(DB_PATH) as db:

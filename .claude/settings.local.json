@@ -12,7 +12,10 @@
       "Bash(git remote *)",
       "Bash(git push *)",
       "Bash(~/.fly/bin/flyctl auth *)",
-      "Bash(~/.fly/bin/flyctl launch *)"
+      "Bash(~/.fly/bin/flyctl launch *)",
+      "Bash(pkill -f \"bot.py\")",
+      "Bash(kill -9 3240 6817)",
+      "Bash(pkill -9 -f \"bot.py\")"
     ]
   }
 }

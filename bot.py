@@ -21,6 +21,7 @@ from handlers import (
     filial_olish, telefon_olish, telefon2_olish,
     tugilgan_kun_olish,
     xodim_chat_handler,
+    admin_guruh_javob,
     callback_handler,
     admin_statistika, admin_xodimlar,
     admin_kutilayotganlar, admin_bloklanganlar,
@@ -78,6 +79,7 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel Eksport$"),          admin_excel_eksport))
     app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
 
     return app

@@ -325,6 +325,27 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # ══════════════════════════════════════════════
+# ADMIN GURUH TOPIC JAVOBLARI → XODIMGA YO'NALTIRISH
+# ══════════════════════════════════════════════
+async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg or not msg.message_thread_id:
+        return
+    if msg.chat.id != GROUP_CHAT_ID or update.effective_user.id != ADMIN_ID:
+        return
+
+    row = await db.get_xodim_by_topic(msg.message_thread_id)
+    if not row:
+        return
+
+    user_id, _ = row
+    try:
+        await msg.copy(chat_id=user_id)
+    except Exception as e:
+        logger.error(f"Admin javobini xodimga yuborishda xato (uid={user_id}): {e}")
+
+
+# ══════════════════════════════════════════════
 # CALLBACK HANDLER
 # ══════════════════════════════════════════════
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
