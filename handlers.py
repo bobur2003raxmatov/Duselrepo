@@ -269,6 +269,11 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif msg.sticker:    ctype = "🎭 Sticker"
     else:                ctype = "💬 Matn"
 
+    # Xodim admin xabariga reply qilyaptimi?
+    reply_to_group_id = None
+    if msg.reply_to_message:
+        reply_to_group_id = await db.get_group_msg_id_by_private(uid, msg.reply_to_message.message_id)
+
     task_id = await db.insert_xabar(uid, ism, filial, ctype, msg.message_id)
 
     try:
@@ -282,7 +287,21 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ),
             parse_mode="Markdown",
         )
-        await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=topic_id)
+        # Reply konteksti bilan yoki oddiy forward
+        if reply_to_group_id:
+            try:
+                fwd = await context.bot.copy_message(
+                    chat_id=GROUP_CHAT_ID,
+                    from_chat_id=msg.chat_id,
+                    message_id=msg.message_id,
+                    message_thread_id=topic_id,
+                    reply_to_message_id=reply_to_group_id,
+                )
+            except BadRequest:
+                fwd = await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=topic_id)
+        else:
+            fwd = await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=topic_id)
+        await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=topic_id,
@@ -353,8 +372,21 @@ async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id, _ = row
+
+    # Admin xodimning forward qilingan xabariga reply qilyaptimi?
+    reply_to_private_id = None
+    if msg.reply_to_message:
+        xabar = await db.get_xabar_by_group_fwd_id(msg.reply_to_message.message_id)
+        if xabar:
+            reply_to_private_id = xabar[1]  # xodimning asl msg_id si
+
     try:
-        await msg.copy(chat_id=user_id)
+        try:
+            sent = await msg.copy(chat_id=user_id, reply_to_message_id=reply_to_private_id)
+        except BadRequest:
+            sent = await msg.copy(chat_id=user_id)
+        # Mapping saqlash: keyingi xodim reply si uchun
+        await db.insert_admin_msg_map(user_id, msg.message_id, sent.message_id)
     except Exception as e:
         logger.error(f"Admin javobini xodimga yuborishda xato (uid={user_id}): {e}")
 

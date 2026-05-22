@@ -35,6 +35,24 @@ async def init_db():
         """)
         await db.commit()
 
+        # Migration: group_fwd_id ustuni (eski bazalarda yo'q bo'lishi mumkin)
+        try:
+            await db.execute("ALTER TABLE xabarlar ADD COLUMN group_fwd_id INTEGER")
+            await db.commit()
+        except Exception:
+            pass
+
+        # Admin xabarlari → xodim shaxsiy chati mapping jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admin_msg_map (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id        INTEGER,
+                group_msg_id   INTEGER,
+                private_msg_id INTEGER
+            )
+        """)
+        await db.commit()
+
 
 # ── Xodim ────────────────────────────────────────────────────────
 async def get_xodim(user_id: int) -> tuple | None:
@@ -181,6 +199,47 @@ async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id) -> int:
         """, (user_id, ism, filial, xabar_turi, vaqt, msg_id))
         await db.commit()
         return cur.lastrowid
+
+
+async def update_xabar_group_fwd_id(task_id: int, group_fwd_id: int):
+    """Guruhga forward qilingan xabar ID sini saqlaydi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE xabarlar SET group_fwd_id=? WHERE id=?",
+            (group_fwd_id, task_id)
+        )
+        await db.commit()
+
+
+async def get_xabar_by_group_fwd_id(group_fwd_id: int) -> tuple | None:
+    """Guruh forward ID si bo'yicha (user_id, msg_id) qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, msg_id FROM xabarlar WHERE group_fwd_id=?",
+            (group_fwd_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def insert_admin_msg_map(user_id: int, group_msg_id: int, private_msg_id: int):
+    """Admin xabari → xodim shaxsiy chati mapping ni saqlaydi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO admin_msg_map (user_id, group_msg_id, private_msg_id) VALUES (?, ?, ?)",
+            (user_id, group_msg_id, private_msg_id)
+        )
+        await db.commit()
+
+
+async def get_group_msg_id_by_private(user_id: int, private_msg_id: int) -> int | None:
+    """Xodim shaxsiy chatidagi xabar ID si bo'yicha guruh xabar ID sini qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT group_msg_id FROM admin_msg_map WHERE user_id=? AND private_msg_id=?",
+            (user_id, private_msg_id)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
 
 
 async def get_xodim_by_topic(topic_id: int) -> tuple | None:
