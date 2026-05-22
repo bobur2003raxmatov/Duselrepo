@@ -228,6 +228,21 @@ async def get_all_xabarlar_for_excel() -> list:
             return await cur.fetchall()
 
 
+async def get_kunlik_statistika() -> list:
+    """Har bir xodim uchun bugungi xabar / bajarilgan soni."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT xodim_name, filial,
+                   COUNT(*) AS jami,
+                   SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) AS bajarildi
+            FROM xabarlar
+            WHERE date(vaqt) = date('now', 'localtime')
+            GROUP BY user_id
+            ORDER BY jami DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
 async def get_statistika() -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(

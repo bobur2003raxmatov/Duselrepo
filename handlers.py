@@ -663,8 +663,12 @@ async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     val        = update.message.text.strip()
-    field      = context.user_data["edit_field"]
-    target_uid = context.user_data["edit_uid"]
+    field      = context.user_data.get("edit_field")
+    target_uid = context.user_data.get("edit_uid")
+
+    if not field or not target_uid:
+        await update.message.reply_text("❌ Xato yuz berdi. Qaytadan boshlang.", reply_markup=admin_kb())
+        return ConversationHandler.END
     await db.update_xodim_field(target_uid, field, val)
     await update.message.reply_text(
         "✅ Xodim ma'lumotlari muvaffaqiyatli yangilandi!",

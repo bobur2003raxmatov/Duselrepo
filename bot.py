@@ -126,6 +126,10 @@ async def post_init(app: Application):
 
 
 async def error_handler(update: object, context) -> None:
+    from telegram.error import NetworkError, TimedOut
+    if isinstance(context.error, (NetworkError, TimedOut)):
+        logger.warning(f"Tarmoq xatosi (vaqtinchalik): {context.error}")
+        return
     logger.error("Kutilmagan xato:", exc_info=context.error)
 
 
