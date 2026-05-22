@@ -59,6 +59,7 @@ def admin_kb() -> ReplyKeyboardMarkup:
             ["⏳ Kutilayotgan so'rovlar",  "🚫 Bloklanganlar"],
             ["📝 Xodimni Tahrirlash",      "📥 Excel"],
             ["🔍 Xodim Qidirish",          "🔗 Biriktirish"],
+            ["⭐ Agent Reytingi",           "🏆 Filial Reytingi"],
         ],
         resize_keyboard=True,
     )
@@ -183,6 +184,36 @@ def biriktirish_checkers_kb(rows: list) -> InlineKeyboardMarkup:
     )] for r in rows]
     buttons.append([InlineKeyboardButton("🚫 Biriktirmaslik (o'chirish)", callback_data="bir_none")])
     return InlineKeyboardMarkup(buttons)
+
+
+def urgency_kb(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔴 Shoshilinch", callback_data=f"urgency_{group_id}_shoshilinch"),
+        InlineKeyboardButton("🟡 O'rta",       callback_data=f"urgency_{group_id}_orta"),
+        InlineKeyboardButton("🟢 Oddiy",       callback_data=f"urgency_{group_id}_oddiy"),
+    ]])
+
+
+def stars_kb(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("⭐",      callback_data=f"star_{group_id}_1"),
+        InlineKeyboardButton("⭐⭐",    callback_data=f"star_{group_id}_2"),
+        InlineKeyboardButton("⭐⭐⭐",  callback_data=f"star_{group_id}_3"),
+        InlineKeyboardButton("⭐⭐⭐⭐", callback_data=f"star_{group_id}_4"),
+        InlineKeyboardButton("⭐⭐⭐⭐⭐", callback_data=f"star_{group_id}_5"),
+    ]])
+
+
+def filial_filter_kb(active: str = "haftalik") -> InlineKeyboardMarkup:
+    def btn(label: str, key: str) -> InlineKeyboardButton:
+        text = f"▶ {label}" if key == active else label
+        return InlineKeyboardButton(text, callback_data=f"filial_lider_{key}")
+    return InlineKeyboardMarkup([[
+        btn("Haftalik", "haftalik"),
+        btn("Oylik",    "oylik"),
+        btn("Yillik",   "yillik"),
+        btn("Hammasi",  "hammasi"),
+    ]])
 
 
 def checker_sorov_kb(group_id: int) -> InlineKeyboardMarkup:

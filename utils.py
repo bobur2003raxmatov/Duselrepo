@@ -89,6 +89,51 @@ async def daily_report_job(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Kunlik hisobot yuborishda xato: {e}")
 
 
+async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """Dushanba 09:00 — har bir checker va uning agentlari bo'yicha haftalik hisobot."""
+    from database import get_checker_weekly_stats
+    rows = await get_checker_weekly_stats()
+    today = datetime.now().strftime("%d.%m.%Y")
+
+    matn = f"📅 *Haftalik Hisobot ({today})*\n\n"
+    if not rows:
+        matn += "_Bu hafta biriktirish yo'q yoki faollik kuzatilmadi._"
+    else:
+        for r in rows:
+            checker_ism, agents, topshiriq, bajarildi, avg_r = r
+            stars = ("⭐" * round(avg_r)) if avg_r else "—"
+            matn += (
+                f"👤 *{checker_ism}*\n"
+                f"  Agentlar: {agents} ta  |  Topshiriqlar: {topshiriq}\n"
+                f"  Bajarildi: {bajarildi or 0}  |  Reyting: {stars}\n\n"
+            )
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=matn, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Haftalik hisobot yuborishda xato: {e}")
+
+
+async def agent_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Har kuni 17:00 — bugun xabar yubormagan agentlarning checker larini xabardor qilish."""
+    from database import get_agents_without_messages_today, get_biriktirish
+    agents = await get_agents_without_messages_today()
+    for agent_id, agent_ism in agents:
+        checker_id = await get_biriktirish(agent_id)
+        if not checker_id:
+            continue
+        try:
+            await context.bot.send_message(
+                chat_id=checker_id,
+                text=(
+                    f"⏰ *Eslatma:* *{agent_ism}* bugun hech qanday topshiriq yubormaganlar.\n"
+                    f"Tekshirib ko'ring."
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.warning(f"Agent reminder xato (checker={checker_id}): {e}")
+
+
 async def generate_excel(x_data: list, m_data: list) -> str:
     suffix = f"_Dusel_Hisobot_{datetime.now().strftime('%d_%m_%Y')}.xlsx"
     fd, filename = tempfile.mkstemp(suffix=suffix)

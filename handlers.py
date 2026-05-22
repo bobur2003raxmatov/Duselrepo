@@ -16,6 +16,7 @@ from keyboards import (
     group_sorov_inline, group_bajarildi_inline,
     search_results_kb, xodim_profil_kb,
     biriktirish_agents_kb, biriktirish_checkers_kb, checker_sorov_kb,
+    urgency_kb, stars_kb, filial_filter_kb,
 )
 from utils import is_topic_valid, check_sla_timeout, generate_excel
 from config import (
@@ -411,6 +412,17 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"✅ #{group_id}-sonli so'rovingiz qabul qilindi. Admin javobini kuting."
             )
 
+            # Feature 16: Urgency tanlash (faqat yangi guruh uchun)
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=f"#{group_id} topshiriqning muhimlilik darajasini tanlang:",
+                    reply_markup=urgency_kb(group_id),
+                    disable_notification=True,
+                )
+            except Exception:
+                pass
+
             # Biriktirish: Agent bo'lsa checker borligini tekshir
             checker_id = await db.get_biriktirish(uid) if lavozim == "Agent" else None
             if checker_id:
@@ -430,6 +442,19 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     _schedule_sla(context, group_id, ism)
             else:
                 _schedule_sla(context, group_id, ism)
+                # Feature 10: Agent uchun checker biriktirilmagan bo'lsa adminga xabar
+                if lavozim == "Agent":
+                    try:
+                        await context.bot.send_message(
+                            chat_id=ADMIN_ID,
+                            text=(
+                                f"⚠️ *{em(ism)}* uchun checker biriktirilmagan!\n"
+                                f"Biriktirish uchun '🔗 Biriktirish' ni bosing."
+                            ),
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
 
         except BadRequest as e:
             if "message thread not found" in str(e).lower():
@@ -586,6 +611,19 @@ async def _cb_user_action(query, context, action: str, target_uid: int):
             )
         except Exception as e:
             logger.warning(f"Bloklash xabari yuborishda xato (uid={target_uid}): {e}")
+        # Feature 11: checker ga xabar
+        row = await db.get_xodim(target_uid)
+        if row and row[3] == "Agent":
+            checker_id = await db.get_biriktirish(target_uid)
+            if checker_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=checker_id,
+                        text=f"🚫 *{em(row[2])}* (Agent) admin tomonidan bloklandi.",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
 
     elif action == "unbl":
         await db.unblock_xodim(target_uid)
@@ -597,6 +635,19 @@ async def _cb_user_action(query, context, action: str, target_uid: int):
             )
         except Exception as e:
             logger.warning(f"Blokdan ochish xabari yuborishda xato (uid={target_uid}): {e}")
+        # Feature 11: checker ga xabar
+        row = await db.get_xodim(target_uid)
+        if row and row[3] == "Agent":
+            checker_id = await db.get_biriktirish(target_uid)
+            if checker_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=checker_id,
+                        text=f"🔓 *{em(row[2])}* (Agent) blokdan chiqarildi.",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
 
 
 async def _cb_xod_page(query, page: int):
@@ -692,6 +743,61 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data  = query.data
     await query.answer()
 
+    # ── Urgency tanlash (agent tomonidan) ─────────────────────────
+    if data.startswith("urgency_"):
+        parts    = data.split("_")
+        group_id = int(parts[1])
+        level    = parts[2]  # shoshilinch / orta / oddiy
+        await db.set_urgency(group_id, level)
+        URGENCY_LABEL = {"shoshilinch": "🔴 Shoshilinch", "orta": "🟡 O'rta", "oddiy": "🟢 Oddiy"}
+        label = URGENCY_LABEL.get(level, level)
+        await query.edit_message_text(f"#{group_id} topshiriq: *{label}* deb belgilandi.", parse_mode="Markdown")
+        # Feature 16: Shoshilinch bo'lsa checker ga maxsus ogohlantirish
+        if level == "shoshilinch":
+            group = await db.get_group_info(group_id)
+            if group:
+                agent_uid, agent_ism = group[0], group[1]
+                checker_id = await db.get_biriktirish(agent_uid)
+                if checker_id:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=checker_id,
+                            text=f"🚨 *SHOSHILINCH!* *{em(agent_ism)}* #{group_id} topshiriq yubordi!\nDarhol ko'rib chiqing!",
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
+        return
+
+    # ── Yulduz reyting (checker tomonidan) ────────────────────────
+    if data.startswith("star_"):
+        parts    = data.split("_")
+        group_id = int(parts[1])
+        yulduz   = int(parts[2])
+        checker  = query.from_user.id
+        group    = await db.get_group_info(group_id)
+        if not group:
+            await query.edit_message_text("❌ Guruh topilmadi.")
+            return
+        agent_uid = group[0]
+        await db.add_baholash(group_id, checker, agent_uid, yulduz)
+        await db.update_checker_faollik(checker)
+        stars_str = "⭐" * yulduz
+        await query.edit_message_text(f"✅ #{group_id} — {stars_str} bilan baholandi!")
+        try:
+            summary = await db.get_agent_rating_summary(agent_uid)
+            await context.bot.send_message(
+                chat_id=agent_uid,
+                text=(
+                    f"⭐ #{group_id} topshiriqingiz *{stars_str}* bilan baholandi!\n"
+                    f"Sizning o'rtacha reytingingiz: *{summary['avg']}* ({summary['total']} ta baho)"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return
+
     # ── Checker callback (admin bo'lmagan xodimlar uchun) ─────────
     if data.startswith("bir_tasd_"):
         group_id  = int(data.split("_")[2])
@@ -706,7 +812,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         checker_row  = await db.get_xodim(checker)
         checker_ism  = checker_row[2] if checker_row else "Tekshiruvchi"
+        await db.update_checker_faollik(checker)
         await query.edit_message_text(f"✅ #{group_id} topshiriqni tasdiqladingiz!")
+        # Feature 17: Baholash so'rash
+        try:
+            await context.bot.send_message(
+                chat_id=checker,
+                text=f"#{group_id} topshiriqni baholang (1-5 yulduz):",
+                reply_markup=stars_kb(group_id),
+            )
+        except Exception:
+            pass
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
@@ -731,6 +847,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await db.get_biriktirish(agent_uid) != checker:
             await query.answer("Siz bu topshiriqni rad etish huquqiga ega emassiz.", show_alert=True)
             return
+        await db.update_checker_faollik(checker)
         await db.update_group_holat(group_id, "rad etildi")
         checker_row = await db.get_xodim(checker)
         checker_ism = checker_row[2] if checker_row else "Tekshiruvchi"
@@ -748,6 +865,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.from_user.id != ADMIN_ID:
+        return
+
+    if data.startswith("filial_lider_"):
+        period = data.split("_")[2]
+        await _send_filial_leaderboard(query.edit_message_text, period)
         return
 
     if data.startswith("xodim_profil_"):
@@ -1044,7 +1166,10 @@ async def admin_biriktirish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if rows:
         matn += "*Joriy biriktirishlar:*\n"
         for r in rows:
-            matn += f"• *{em(r[1] or '?')}* → *{em(r[3] or '?')}*\n"
+            checker_id = r[2]
+            last_active = await db.get_checker_faollik(checker_id)
+            last_str = last_active[:16] if last_active else "Hali faol bo'lmagan"
+            matn += f"• *{em(r[1] or '?')}* → *{em(r[3] or '?')}* _(faollik: {last_str})_\n"
         matn += "\n"
     matn += "Biriktirish uchun Agent tanlang:"
 
@@ -1115,3 +1240,58 @@ async def biriktir_checker_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="Markdown",
     )
     return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════
+# REYTING VA FILIAL LEADERBOARD (Features 17, 19)
+# ══════════════════════════════════════════════
+MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+
+async def _send_filial_leaderboard(send_fn, period: str = "haftalik"):
+    rows = await db.get_filial_stats(period)
+    PERIOD_LABEL = {"haftalik": "Haftalik", "oylik": "Oylik", "yillik": "Yillik", "hammasi": "Jami"}
+    label = PERIOD_LABEL.get(period, period)
+    matn = f"🏆 *Filial Reytingi — {label}*\n\n"
+    if not rows:
+        matn += "_Ma'lumot yo'q._"
+    else:
+        for i, r in enumerate(rows, 1):
+            filial, agents, topshiriq, bajarildi, avg_r, avg_vaqt = r
+            medal = MEDALS.get(i, f"{i}.")
+            stars = ("⭐" * round(avg_r)) if avg_r else "—"
+            vaqt_str = f"{avg_vaqt:.0f} daq" if avg_vaqt else "—"
+            matn += (
+                f"{medal} *{em(filial or '?')}*\n"
+                f"   👥 Agentlar: {agents}  |  📋 Topshiriq: {topshiriq or 0}\n"
+                f"   ✅ Bajarildi: {bajarildi or 0}  |  ⭐ {stars}  |  ⏱ {vaqt_str}\n\n"
+            )
+    await send_fn(
+        matn,
+        parse_mode="Markdown",
+        reply_markup=filial_filter_kb(period),
+    )
+
+
+@admin_only
+async def admin_filial_lider(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _send_filial_leaderboard(update.message.reply_text, "haftalik")
+
+
+@admin_only
+async def admin_agent_reyting(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = await db.get_agent_leaderboard()
+    matn = "⭐ *Agent Reytingi*\n\n"
+    if not rows:
+        matn += "_Hali hech qanday baho yo'q._"
+    else:
+        for i, r in enumerate(rows, 1):
+            uid, ism, filial, avg, total, haftalik = r
+            medal = MEDALS.get(i, f"#{i}")
+            haftalik_str = f"{haftalik}" if haftalik else "—"
+            matn += (
+                f"{medal} *{em(ism)}* | {em(filial)}\n"
+                f"   Umumiy: {'⭐' * round(avg)} *{avg}* ({total} baho)"
+                f"  |  Bu hafta: {haftalik_str}\n\n"
+            )
+    await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=admin_kb())

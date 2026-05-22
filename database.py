@@ -84,6 +84,35 @@ async def init_db():
         """)
         await db.commit()
 
+        # Baholash (reyting) jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS baholash (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id   INTEGER UNIQUE,
+                checker_id INTEGER,
+                agent_id   INTEGER,
+                yulduz     INTEGER,
+                vaqt       TEXT
+            )
+        """)
+        await db.commit()
+
+        # Checker faollik vaqti
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS checker_faollik (
+                checker_id  INTEGER PRIMARY KEY,
+                last_active TEXT
+            )
+        """)
+        await db.commit()
+
+        # urgency ustuni xabar_guruhi uchun
+        try:
+            await db.execute("ALTER TABLE xabar_guruhi ADD COLUMN urgency TEXT DEFAULT 'oddiy'")
+            await db.commit()
+        except Exception:
+            pass
+
         # Agent → Checker biriktirish jadvali
         await db.execute("""
             CREATE TABLE IF NOT EXISTS biriktirish (
@@ -607,3 +636,146 @@ async def delete_faq_kategoriya(kategoriya_id: int):
         await db.execute("DELETE FROM faq WHERE kategoriya_id=?", (kategoriya_id,))
         await db.execute("DELETE FROM faq_kategoriya WHERE id=?", (kategoriya_id,))
         await db.commit()
+
+
+# ── Urgency ──────────────────────────────────────────────────────
+async def set_urgency(group_id: int, urgency: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE xabar_guruhi SET urgency=? WHERE id=?", (urgency, group_id)
+        )
+        await db.commit()
+
+
+# ── Baholash (reyting) ───────────────────────────────────────────
+async def add_baholash(group_id: int, checker_id: int, agent_id: int, yulduz: int):
+    vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO baholash (group_id, checker_id, agent_id, yulduz, vaqt) VALUES (?,?,?,?,?)",
+            (group_id, checker_id, agent_id, yulduz, vaqt)
+        )
+        await db.commit()
+
+
+async def get_agent_rating_summary(agent_id: int) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT ROUND(AVG(yulduz),1), COUNT(*) FROM baholash WHERE agent_id=?",
+            (agent_id,)
+        ) as cur:
+            avg, total = await cur.fetchone()
+        async with db.execute(
+            "SELECT ROUND(AVG(yulduz),1) FROM baholash WHERE agent_id=? AND date(vaqt)>=date('now','-7 days','localtime')",
+            (agent_id,)
+        ) as cur:
+            haftalik = (await cur.fetchone())[0]
+    return {"avg": avg or 0.0, "total": total or 0, "haftalik": haftalik or 0.0}
+
+
+async def get_agent_leaderboard() -> list:
+    """[(user_id, ism, filial, avg, total, haftalik_avg)]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT x.user_id, x.ism, x.filial,
+                   ROUND(AVG(b.yulduz),1) as avg_r,
+                   COUNT(b.id) as total,
+                   ROUND(AVG(CASE WHEN date(b.vaqt) >= date('now','-7 days','localtime') THEN b.yulduz END),1) as haftalik
+            FROM xodimlar x
+            JOIN baholash b ON b.agent_id = x.user_id
+            WHERE x.lavozim='Agent' AND x.status='approved'
+            GROUP BY x.user_id
+            ORDER BY avg_r DESC, total DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
+# ── Checker faollik ──────────────────────────────────────────────
+async def update_checker_faollik(checker_id: int):
+    vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO checker_faollik (checker_id, last_active) VALUES (?,?)",
+            (checker_id, vaqt)
+        )
+        await db.commit()
+
+
+async def get_checker_faollik(checker_id: int) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT last_active FROM checker_faollik WHERE checker_id=?", (checker_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+# ── Haftalik hisobot ─────────────────────────────────────────────
+async def get_checker_weekly_stats() -> list:
+    """[(checker_ism, agent_count, topshiriq, bajarildi, avg_reyting)]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT c.ism,
+                   COUNT(DISTINCT bir.agent_id) as agents,
+                   COUNT(DISTINCT g.id) as topshiriq,
+                   SUM(CASE WHEN g.holat='bajarildi' THEN 1 ELSE 0 END) as bajarildi,
+                   ROUND(AVG(b.yulduz),1) as avg_r
+            FROM biriktirish bir
+            JOIN xodimlar c ON c.user_id = bir.checker_id
+            LEFT JOIN xabar_guruhi g ON g.user_id = bir.agent_id
+                AND date(g.vaqt) >= date('now','-7 days','localtime')
+            LEFT JOIN baholash b ON b.agent_id = bir.agent_id
+                AND date(b.vaqt) >= date('now','-7 days','localtime')
+            GROUP BY bir.checker_id
+            ORDER BY bajarildi DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
+# ── Agent faollik tekshiruvi ─────────────────────────────────────
+async def get_agents_without_messages_today() -> list:
+    """Bugun hech qanday xabar yubormaganlar: [(user_id, ism)]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT x.user_id, x.ism FROM xodimlar x
+            WHERE x.lavozim='Agent' AND x.status='approved'
+            AND x.user_id NOT IN (
+                SELECT DISTINCT user_id FROM xabar_guruhi
+                WHERE date(vaqt) = date('now','localtime')
+            )
+        """) as cur:
+            return await cur.fetchall()
+
+
+# ── Filial statistikasi ──────────────────────────────────────────
+async def get_filial_stats(period: str = "haftalik") -> list:
+    """[(filial, agent_soni, topshiriq, bajarildi, avg_reyting, avg_vaqt_daqiqa)]"""
+    period_filter = {
+        "haftalik": "date('now','-7 days','localtime')",
+        "oylik":    "date('now','-30 days','localtime')",
+        "yillik":   "date('now','-365 days','localtime')",
+        "hammasi":  "date('2000-01-01')",
+    }.get(period, "date('now','-7 days','localtime')")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(f"""
+            SELECT
+                x.filial,
+                COUNT(DISTINCT x.user_id)                                          as agent_soni,
+                COUNT(DISTINCT g.id)                                               as topshiriq,
+                SUM(CASE WHEN g.holat='bajarildi' THEN 1 ELSE 0 END)              as bajarildi,
+                ROUND(AVG(b.yulduz), 1)                                            as avg_reyting,
+                ROUND(AVG(CASE
+                    WHEN g.holat='bajarildi' AND g.javob_vaqt IS NOT NULL
+                    THEN (julianday(g.javob_vaqt) - julianday(g.vaqt)) * 1440
+                END), 1)                                                            as avg_vaqt
+            FROM xodimlar x
+            LEFT JOIN xabar_guruhi g
+                ON g.user_id = x.user_id AND date(g.vaqt) >= {period_filter}
+            LEFT JOIN baholash b
+                ON b.agent_id = x.user_id AND date(b.vaqt) >= {period_filter}
+            WHERE x.lavozim='Agent' AND x.status='approved'
+            GROUP BY x.filial
+            ORDER BY bajarildi DESC, avg_reyting DESC
+        """) as cur:
+            return await cur.fetchall()

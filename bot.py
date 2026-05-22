@@ -24,7 +24,7 @@ from config import (
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER,
 )
 from database import init_db
-from utils import daily_report_job
+from utils import daily_report_job, weekly_report_job, agent_reminder_job
 from handlers import (
     reaction_handler,
     start, cancel,
@@ -39,6 +39,7 @@ from handlers import (
     admin_excel_eksport,
     admin_search, search_query_handler,
     admin_biriktirish, biriktir_agent_cb, biriktir_checker_cb,
+    admin_agent_reyting, admin_filial_lider,
     start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
 )
 
@@ -123,6 +124,8 @@ def build_application() -> Application:
     app.add_handler(biriktir_conv)
     app.add_handler(cancel_cmd)
 
+    app.add_handler(MessageHandler(filters.Regex(r"^⭐ Agent Reytingi$"),          admin_agent_reyting))
+    app.add_handler(MessageHandler(filters.Regex(r"^🏆 Filial Reytingi$"),         admin_filial_lider))
     app.add_handler(MessageHandler(filters.Regex(r"^📊 Statistika$"),             admin_statistika))
     app.add_handler(MessageHandler(filters.Regex(r"^👥 Xodimlar$"),               admin_xodimlar))
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
@@ -157,13 +160,29 @@ async def post_init(app: Application):
         logger.warning(f"General topic cheklovini o'rnatishda xato: {e}")
 
 
-    # Daily report at 09:00 Tashkent time (UTC+5)
     tz_uz = datetime.timezone(datetime.timedelta(hours=5))
+
+    # Daily report at 09:00
     app.job_queue.run_daily(
         daily_report_job,
         time=datetime.time(hour=9, minute=0, tzinfo=tz_uz),
     )
     logger.info("✅ Kunlik hisobot rejalashtirildi: 09:00 (UTC+5)")
+
+    # Weekly report every Monday at 09:00 (feature 15)
+    app.job_queue.run_daily(
+        weekly_report_job,
+        time=datetime.time(hour=9, minute=0, tzinfo=tz_uz),
+        days=(0,),  # 0 = Monday
+    )
+    logger.info("✅ Haftalik hisobot rejalashtirildi: Dushanba 09:00 (UTC+5)")
+
+    # Agent reminder every day at 17:00 (feature 18)
+    app.job_queue.run_daily(
+        agent_reminder_job,
+        time=datetime.time(hour=17, minute=0, tzinfo=tz_uz),
+    )
+    logger.info("✅ Agent eslatmasi rejalashtirildi: 17:00 (UTC+5)")
 
 
 async def error_handler(update: object, context) -> None:
