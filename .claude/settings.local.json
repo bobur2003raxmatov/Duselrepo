@@ -16,7 +16,9 @@
       "Bash(pkill -f \"bot.py\")",
       "Bash(kill -9 3240 6817)",
       "Bash(pkill -9 -f \"bot.py\")",
-      "Bash(grep -n \"except Exception\\\\|except:\\\\|pass$\" /Users/macbookpro/telegram-bot/handlers.py)"
+      "Bash(grep -n \"except Exception\\\\|except:\\\\|pass$\" /Users/macbookpro/telegram-bot/handlers.py)",
+      "Bash(grep *)",
+      "Bash(python3 -c \"from telegram import ReplyParameters; print\\('ReplyParameters OK'\\)\")"
     ]
   }
 }

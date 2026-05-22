@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from functools import wraps
 
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, ReplyParameters
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -295,7 +295,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     from_chat_id=msg.chat_id,
                     message_id=msg.message_id,
                     message_thread_id=topic_id,
-                    reply_to_message_id=reply_to_group_id,
+                    reply_parameters=ReplyParameters(message_id=reply_to_group_id),
                 )
             except BadRequest:
                 fwd = await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=topic_id)
@@ -382,7 +382,8 @@ async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         try:
-            sent = await msg.copy(chat_id=user_id, reply_to_message_id=reply_to_private_id)
+            rp = ReplyParameters(message_id=reply_to_private_id) if reply_to_private_id else None
+            sent = await msg.copy(chat_id=user_id, reply_parameters=rp)
         except BadRequest:
             sent = await msg.copy(chat_id=user_id)
         # Mapping saqlash: keyingi xodim reply si uchun
@@ -438,8 +439,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=target_uid,
                     text="❌ Arizangiz rad etildi. Qo'shimcha ma'lumot uchun adminga murojaat qiling.",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Rad xabari yuborishda xato (uid={target_uid}): {e}")
 
         elif action == "block":
             await db.block_xodim(target_uid)
@@ -449,8 +450,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=target_uid,
                     text="🚫 Profilingiz ma'muriyat tomonidan bloklandi.",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Bloklash xabari yuborishda xato (uid={target_uid}): {e}")
 
         elif action == "unbl":
             await db.unblock_xodim(target_uid)
@@ -460,8 +461,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=target_uid,
                     text="🔓 Profilingiz tiklandi! Botdan yana foydalana olasiz.",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Blokdan ochish xabari yuborishda xato (uid={target_uid}): {e}")
         return
 
     # ── Xodimlar sahifalash ───────────────────────────────────────
@@ -506,10 +507,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=t_uid,
                     text=f"🔄 #{task_id}-sonli so'rovingiz ko'rib chiqish jarayoniga o'tkazildi.",
-                    reply_to_message_id=msg_id,
+                    reply_parameters=ReplyParameters(message_id=msg_id),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Xodimga jarayon xabari yuborishda xato (uid={t_uid}): {e}")
 
         elif action == "done":
             await db.update_xabar_holat(task_id, "bajarildi")
@@ -518,10 +519,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=t_uid,
                     text=f"✅ #{task_id}-sonli so'rov muvaffaqiyatli bajarildi.",
-                    reply_to_message_id=msg_id,
+                    reply_parameters=ReplyParameters(message_id=msg_id),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Xodimga bajarildi xabari yuborishda xato (uid={t_uid}): {e}")
 
 
 # ══════════════════════════════════════════════
@@ -715,8 +716,8 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode="Markdown",
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Tahrirlash xabari yuborishda xato (uid={target_uid}): {e}")
     return ConversationHandler.END
 
 

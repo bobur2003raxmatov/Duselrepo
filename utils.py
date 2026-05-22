@@ -28,10 +28,9 @@ async def is_topic_valid(context: ContextTypes.DEFAULT_TYPE, topic_id: int | Non
 
 async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
     from database import get_xabar
-    job      = context.job
-    task_id  = job.data["task_id"]
-    topic_id = job.data["topic_id"]
-    x_ism    = job.data["x_ism"]
+    job     = context.job
+    task_id = job.data["task_id"]
+    x_ism   = job.data["x_ism"]
     reminder = job.data.get("reminder", 1)
 
     row = await get_xabar(task_id)
@@ -51,17 +50,6 @@ async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logger.error(f"Admin SLA xabari yuborishda xato: {e}")
-
-    if topic_id:
-        try:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                message_thread_id=topic_id,
-                text=ogohlantirish,
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            logger.error(f"Topic SLA xabari yuborishda xato: {e}")
 
 
 async def daily_report_job(context: ContextTypes.DEFAULT_TYPE):
