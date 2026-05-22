@@ -296,6 +296,21 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
         return await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=t_id)
 
+    async def _log(group_id: int):
+        """General topicga log yozadi."""
+        role_txt   = f"{lavozim} ({kod})" if kod and kod != "KOD YO'Q" else lavozim
+        topic_name = f"{ism} — {role_txt} | {filial}"
+        now_str    = datetime.now().strftime("%H:%M")
+        if msg.text:
+            content = msg.text[:80] + ("..." if len(msg.text) > 80 else "")
+        else:
+            content = ctype
+        log_text = f"[{topic_name}] {ism}: {content} — {now_str}"
+        try:
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=log_text)
+        except Exception as e:
+            logger.warning(f"General topicga log yuborishda xato: {e}")
+
     if active:
         # ── Mavjud guruhga qo'shish ──────────────────────────────
         group_id, _ = active
@@ -311,6 +326,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             fwd = await _fwd(topic_id)
             await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
+            await _log(group_id)
             await msg.reply_text(f"✅ #{group_id}-guruhga qo'shildi ({msg_count}-xabar).")
 
         except BadRequest as e:
@@ -353,6 +369,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             fwd = await _fwd(topic_id)
             await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
+            await _log(group_id)
             await context.bot.send_message(
                 chat_id=GROUP_CHAT_ID,
                 message_thread_id=topic_id,
