@@ -21,7 +21,9 @@ GROUP_TIMEOUT_SEC = 60   # 1 daqiqa — bir guruhga birlashish oynasi
 # Conversation states
 ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN = range(7)
 EDIT_USER, EDIT_FIELD, EDIT_VALUE = range(7, 10)
-SEARCH_QUERY = 10
+SEARCH_QUERY     = 10
+BIRIKTIR_AGENT   = 11
+BIRIKTIR_CHECKER = 12
 
 # Pagination
 PAGE_SIZE = 10

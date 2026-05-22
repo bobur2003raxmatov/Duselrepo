@@ -15,6 +15,7 @@ from keyboards import (
     sorov_inline, bajarildi_inline, tasdiq_inline, unblock_inline,
     group_sorov_inline, group_bajarildi_inline,
     search_results_kb, xodim_profil_kb,
+    biriktirish_agents_kb, biriktirish_checkers_kb, checker_sorov_kb,
 )
 from utils import is_topic_valid, check_sla_timeout, generate_excel
 from config import (
@@ -22,6 +23,7 @@ from config import (
     SLA_TIMEOUT_SEC, GROUP_TIMEOUT_SEC, PAGE_SIZE,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
     EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
+    BIRIKTIR_AGENT, BIRIKTIR_CHECKER,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,20 @@ logger = logging.getLogger(__name__)
 def em(text) -> str:
     """Markdown v1 uchun foydalanuvchi matnini xavfsiz qiladi."""
     return escape_markdown(str(text), version=1)
+
+
+def _schedule_sla(context, group_id: int, ism: str):
+    """15 va 30 daqiqali SLA eslatmalarini rejalashtiradi."""
+    context.job_queue.run_once(
+        check_sla_timeout,
+        when=SLA_TIMEOUT_SEC,
+        data={"group_id": group_id, "x_ism": ism, "reminder": 1},
+    )
+    context.job_queue.run_once(
+        check_sla_timeout,
+        when=SLA_TIMEOUT_SEC * 2,
+        data={"group_id": group_id, "x_ism": ism, "reminder": 2},
+    )
 
 
 def admin_only(func):
@@ -394,16 +410,26 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await msg.reply_text(
                 f"✅ #{group_id}-sonli so'rovingiz qabul qilindi. Admin javobini kuting."
             )
-            context.job_queue.run_once(
-                check_sla_timeout,
-                when=SLA_TIMEOUT_SEC,
-                data={"group_id": group_id, "x_ism": ism, "reminder": 1},
-            )
-            context.job_queue.run_once(
-                check_sla_timeout,
-                when=SLA_TIMEOUT_SEC * 2,
-                data={"group_id": group_id, "x_ism": ism, "reminder": 2},
-            )
+
+            # Biriktirish: Agent bo'lsa checker borligini tekshir
+            checker_id = await db.get_biriktirish(uid) if lavozim == "Agent" else None
+            if checker_id:
+                try:
+                    await msg.copy(chat_id=checker_id)
+                    await context.bot.send_message(
+                        chat_id=checker_id,
+                        text=(
+                            f"📋 *{em(ism)}* (Agent) #{group_id} topshiriq yubordi.\n"
+                            f"Ko'rib chiqing va tasdiqlang:"
+                        ),
+                        parse_mode="Markdown",
+                        reply_markup=checker_sorov_kb(group_id),
+                    )
+                except Exception as e:
+                    logger.warning(f"Checker ga xabar yuborishda xato: {e}")
+                    _schedule_sla(context, group_id, ism)
+            else:
+                _schedule_sla(context, group_id, ism)
 
         except BadRequest as e:
             if "message thread not found" in str(e).lower():
@@ -665,6 +691,61 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data  = query.data
     await query.answer()
+
+    # ── Checker callback (admin bo'lmagan xodimlar uchun) ─────────
+    if data.startswith("bir_tasd_"):
+        group_id  = int(data.split("_")[2])
+        checker   = query.from_user.id
+        group     = await db.get_group_info(group_id)
+        if not group:
+            await query.edit_message_text("❌ Topshiriq topilmadi.")
+            return
+        agent_uid, agent_ism = group[0], group[1]
+        if await db.get_biriktirish(agent_uid) != checker:
+            await query.answer("Siz bu topshiriqni tasdiqlash huquqiga ega emassiz.", show_alert=True)
+            return
+        checker_row  = await db.get_xodim(checker)
+        checker_ism  = checker_row[2] if checker_row else "Tekshiruvchi"
+        await query.edit_message_text(f"✅ #{group_id} topshiriqni tasdiqladingiz!")
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"✅ *{em(checker_ism)}* #{group_id} topshiriqni tasdiqladi!\n"
+                f"👤 Agent: *{em(agent_ism)}*\n"
+                f"⏳ _15 daqiqali tekshiruv boshlanadi._"
+            ),
+            parse_mode="Markdown",
+            reply_markup=group_sorov_inline(group_id),
+        )
+        _schedule_sla(context, group_id, agent_ism)
+        return
+
+    if data.startswith("bir_rad_"):
+        group_id  = int(data.split("_")[2])
+        checker   = query.from_user.id
+        group     = await db.get_group_info(group_id)
+        if not group:
+            await query.edit_message_text("❌ Topshiriq topilmadi.")
+            return
+        agent_uid, agent_ism = group[0], group[1]
+        if await db.get_biriktirish(agent_uid) != checker:
+            await query.answer("Siz bu topshiriqni rad etish huquqiga ega emassiz.", show_alert=True)
+            return
+        await db.update_group_holat(group_id, "rad etildi")
+        checker_row = await db.get_xodim(checker)
+        checker_ism = checker_row[2] if checker_row else "Tekshiruvchi"
+        await query.edit_message_text(f"❌ #{group_id} topshiriqni rad etdingiz.")
+        try:
+            await context.bot.send_message(
+                chat_id=agent_uid,
+                text=(
+                    f"❌ #{group_id}-sonli topshiriqingiz *{em(checker_ism)}* tomonidan rad etildi."
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.warning(f"Agent ga rad xabari yuborishda xato: {e}")
+        return
 
     if query.from_user.id != ADMIN_ID:
         return
@@ -943,3 +1024,94 @@ def _format_profil(row: tuple) -> str:
         f"🆔 ID: `{uid}`\n"
         f"📊 Holat: {STATUS_TEXT.get(status, '❓')}"
     )
+
+
+# ══════════════════════════════════════════════
+# BIRIKTIRISH OQIMI (ADMIN)
+# ══════════════════════════════════════════════
+@admin_only
+async def admin_biriktirish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    agents = await db.get_agents()
+    rows   = await db.get_all_biriktirish()
+
+    if not agents:
+        await update.message.reply_text(
+            "Hozircha tasdiqlangan Agent bo'lgan xodimlar yo'q.", reply_markup=admin_kb()
+        )
+        return ConversationHandler.END
+
+    matn = "🔗 *Biriktirish*\n\n"
+    if rows:
+        matn += "*Joriy biriktirishlar:*\n"
+        for r in rows:
+            matn += f"• *{em(r[1] or '?')}* → *{em(r[3] or '?')}*\n"
+        matn += "\n"
+    matn += "Biriktirish uchun Agent tanlang:"
+
+    await update.message.reply_text(
+        matn, parse_mode="Markdown", reply_markup=biriktirish_agents_kb(agents)
+    )
+    return BIRIKTIR_AGENT
+
+
+async def biriktir_agent_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    agent_id = int(query.data.split("_")[2])
+    context.user_data["biriktir_agent_id"] = agent_id
+
+    row = await db.get_xodim(agent_id)
+    if not row:
+        await query.edit_message_text("Xodim topilmadi.")
+        return ConversationHandler.END
+
+    _, _, ism, lavozim, filial, _ = row
+
+    current_checker_id = await db.get_biriktirish(agent_id)
+    current_text = ""
+    if current_checker_id:
+        c_row = await db.get_xodim(current_checker_id)
+        if c_row:
+            current_text = f"\n_Hozir: {em(c_row[2])} ga biriktirilgan_"
+
+    checkers = await db.get_available_checkers()
+    if not checkers:
+        await query.edit_message_text("Supervisor/Filial Rahbari/Distribyutor bo'lgan xodimlar topilmadi.")
+        return ConversationHandler.END
+
+    await query.edit_message_text(
+        f"👤 *{em(ism)}* ({em(lavozim)} | {em(filial)}){current_text}\n\nQaysi xodimga biriktirmoqchisiz?",
+        parse_mode="Markdown",
+        reply_markup=biriktirish_checkers_kb(checkers),
+    )
+    return BIRIKTIR_CHECKER
+
+
+async def biriktir_checker_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query    = update.callback_query
+    await query.answer()
+
+    agent_id = context.user_data.get("biriktir_agent_id")
+    if not agent_id:
+        await query.edit_message_text("Xato yuz berdi. Qaytadan boshlang.")
+        return ConversationHandler.END
+
+    if query.data == "bir_none":
+        await db.delete_biriktirish(agent_id)
+        await query.edit_message_text("✅ Biriktirish bekor qilindi.")
+        return ConversationHandler.END
+
+    checker_id = int(query.data.split("_")[2])
+    await db.set_biriktirish(agent_id, checker_id)
+
+    agent_row   = await db.get_xodim(agent_id)
+    checker_row = await db.get_xodim(checker_id)
+    agent_ism   = agent_row[2]   if agent_row   else str(agent_id)
+    checker_ism = checker_row[2] if checker_row else str(checker_id)
+
+    await query.edit_message_text(
+        f"✅ *{em(agent_ism)}* → *{em(checker_ism)}* biriktirildi!",
+        parse_mode="Markdown",
+    )
+    return ConversationHandler.END

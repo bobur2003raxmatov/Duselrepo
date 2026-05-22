@@ -58,7 +58,7 @@ def admin_kb() -> ReplyKeyboardMarkup:
             ["📊 Statistika",              "👥 Xodimlar"],
             ["⏳ Kutilayotgan so'rovlar",  "🚫 Bloklanganlar"],
             ["📝 Xodimni Tahrirlash",      "📥 Excel"],
-            ["🔍 Xodim Qidirish"],
+            ["🔍 Xodim Qidirish",          "🔗 Biriktirish"],
         ],
         resize_keyboard=True,
     )
@@ -160,6 +160,35 @@ def faq_javob_kb(faq_id: int, kategoriya_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("⬅️ Savollar", callback_data=f"faq_kat_{kategoriya_id}"),
         InlineKeyboardButton("🏠 Bosh menyu", callback_data="faq_back"),
+    ]])
+
+
+def biriktirish_agents_kb(rows: list) -> InlineKeyboardMarkup:
+    """rows: [(ism, lavozim, filial, kod, user_id, status), ...]"""
+    buttons = []
+    for r in rows:
+        cur = "🔗" if True else ""  # will be set dynamically
+        buttons.append([InlineKeyboardButton(
+            f"👤 {r[0]} | {r[2]}",
+            callback_data=f"bir_agent_{r[4]}",
+        )])
+    return InlineKeyboardMarkup(buttons)
+
+
+def biriktirish_checkers_kb(rows: list) -> InlineKeyboardMarkup:
+    """rows: [(ism, lavozim, filial, kod, user_id, status), ...]"""
+    buttons = [[InlineKeyboardButton(
+        f"👤 {r[0]} — {r[1]} | {r[2]}",
+        callback_data=f"bir_checker_{r[4]}",
+    )] for r in rows]
+    buttons.append([InlineKeyboardButton("🚫 Biriktirmaslik (o'chirish)", callback_data="bir_none")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def checker_sorov_kb(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"bir_tasd_{group_id}"),
+        InlineKeyboardButton("❌ Rad etish",  callback_data=f"bir_rad_{group_id}"),
     ]])
 
 

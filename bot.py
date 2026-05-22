@@ -21,6 +21,7 @@ from config import (
     TOKEN, GROUP_CHAT_ID,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
     EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
+    BIRIKTIR_AGENT, BIRIKTIR_CHECKER,
 )
 from database import init_db
 from utils import daily_report_job
@@ -37,6 +38,7 @@ from handlers import (
     admin_kutilayotganlar, admin_bloklanganlar,
     admin_excel_eksport,
     admin_search, search_query_handler,
+    admin_biriktirish, biriktir_agent_cb, biriktir_checker_cb,
     start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
 )
 
@@ -103,9 +105,22 @@ def build_application() -> Application:
         allow_reentry=True,
     )
 
+    # ── Biriktirish ConversationHandler ─────────────────────────
+    biriktir_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex(r"^🔗 Biriktirish$"), admin_biriktirish)],
+        states={
+            BIRIKTIR_AGENT:   [CallbackQueryHandler(biriktir_agent_cb,   pattern="^bir_agent_")],
+            BIRIKTIR_CHECKER: [CallbackQueryHandler(biriktir_checker_cb, pattern="^bir_checker_|^bir_none$")],
+        },
+        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        allow_reentry=True,
+        per_message=False,
+    )
+
     app.add_handler(royxat_conv)
     app.add_handler(tahrir_conv)
     app.add_handler(qidiruv_conv)
+    app.add_handler(biriktir_conv)
     app.add_handler(cancel_cmd)
 
     app.add_handler(MessageHandler(filters.Regex(r"^📊 Statistika$"),             admin_statistika))

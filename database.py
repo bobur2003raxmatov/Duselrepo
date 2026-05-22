@@ -84,6 +84,15 @@ async def init_db():
         """)
         await db.commit()
 
+        # Agent → Checker biriktirish jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS biriktirish (
+                agent_id   INTEGER PRIMARY KEY,
+                checker_id INTEGER
+            )
+        """)
+        await db.commit()
+
         # Admin xabarlari → xodim shaxsiy chati mapping jadvali
         await db.execute("""
             CREATE TABLE IF NOT EXISTS admin_msg_map (
@@ -179,6 +188,64 @@ async def update_xodim_field(user_id: int, field: str, value: str):
             (value, user_id)
         )
         await db.commit()
+
+
+# ── Biriktirish ──────────────────────────────────────────────────
+async def get_biriktirish(agent_id: int) -> int | None:
+    """Agent uchun biriktirilgan checker_id ni qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT checker_id FROM biriktirish WHERE agent_id=?", (agent_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+async def set_biriktirish(agent_id: int, checker_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO biriktirish (agent_id, checker_id) VALUES (?, ?)",
+            (agent_id, checker_id)
+        )
+        await db.commit()
+
+
+async def delete_biriktirish(agent_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM biriktirish WHERE agent_id=?", (agent_id,))
+        await db.commit()
+
+
+async def get_all_biriktirish() -> list:
+    """Returns [(agent_id, agent_ism, checker_id, checker_ism)]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT b.agent_id, a.ism, b.checker_id, c.ism
+            FROM biriktirish b
+            LEFT JOIN xodimlar a ON a.user_id = b.agent_id
+            LEFT JOIN xodimlar c ON c.user_id = b.checker_id
+        """) as cur:
+            return await cur.fetchall()
+
+
+async def get_agents() -> list:
+    """Barcha tasdiqlangan agentlar."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar WHERE lavozim='Agent' AND status='approved'"
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_available_checkers() -> list:
+    """Supervisor, Filial Rahbari, Distribyutor — tasdiqlangan."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar
+            WHERE lavozim IN ('Supervisor', 'Filial Rahbari', 'Distribyutor')
+            AND status = 'approved'
+        """) as cur:
+            return await cur.fetchall()
 
 
 async def get_xodim_full(user_id: int) -> tuple | None:
