@@ -324,12 +324,12 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.job_queue.run_once(
             check_sla_timeout,
             when=SLA_TIMEOUT_SEC,
-            data={"task_id": task_id, "topic_id": topic_id, "x_ism": ism, "reminder": 1},
+            data={"task_id": task_id, "x_ism": ism, "reminder": 1},
         )
         context.job_queue.run_once(
             check_sla_timeout,
             when=SLA_TIMEOUT_SEC * 2,
-            data={"task_id": task_id, "topic_id": topic_id, "x_ism": ism, "reminder": 2},
+            data={"task_id": task_id, "x_ism": ism, "reminder": 2},
         )
 
     except BadRequest as e:
