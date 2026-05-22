@@ -21,7 +21,8 @@ from config import (
     TOKEN, GROUP_CHAT_ID,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
     EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
-    BIRIKTIR_AGENT, BIRIKTIR_CHECKER,
+    BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
+    BIRIKTIR_EDIT_FIELD, BIRIKTIR_EDIT_VALUE,
 )
 from database import init_db
 from utils import daily_report_job, weekly_report_job, agent_reminder_job
@@ -38,7 +39,11 @@ from handlers import (
     admin_kutilayotganlar, admin_bloklanganlar,
     admin_excel_eksport,
     admin_search, search_query_handler,
-    admin_biriktirish, biriktir_agent_cb, biriktir_checker_cb,
+    admin_biriktirish,
+    biriktir_list_cb, biriktir_new_cb, biriktir_agent_cb, biriktir_back_cb,
+    biriktir_change_cb, biriktir_rm_cb, biriktir_block_cb,
+    biriktir_edit_field_cb, biriktir_edit_value_handler,
+    biriktir_checker_cb,
     admin_agent_reyting, admin_filial_lider,
     start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
 )
@@ -106,12 +111,29 @@ def build_application() -> Application:
         allow_reentry=True,
     )
 
-    # ── Biriktirish ConversationHandler ─────────────────────────
+    # ── Biriktirish ConversationHandler (to'liq agent boshqaruv) ─
     biriktir_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex(r"^🔗 Biriktirish$"), admin_biriktirish)],
         states={
-            BIRIKTIR_AGENT:   [CallbackQueryHandler(biriktir_agent_cb,   pattern="^bir_agent_")],
-            BIRIKTIR_CHECKER: [CallbackQueryHandler(biriktir_checker_cb, pattern="^bir_checker_|^bir_none$")],
+            BIRIKTIR_AGENT: [
+                CallbackQueryHandler(biriktir_list_cb,  pattern="^bir_detail_"),
+                CallbackQueryHandler(biriktir_new_cb,   pattern="^bir_new$"),
+                CallbackQueryHandler(biriktir_agent_cb, pattern="^bir_agent_"),
+                CallbackQueryHandler(biriktir_back_cb,  pattern="^bir_back$"),
+            ],
+            BIRIKTIR_DETAIL: [
+                CallbackQueryHandler(biriktir_change_cb,      pattern="^bir_change_"),
+                CallbackQueryHandler(biriktir_rm_cb,          pattern="^bir_rm_"),
+                CallbackQueryHandler(biriktir_block_cb,       pattern="^bir_block_|^bir_unblock_"),
+                CallbackQueryHandler(biriktir_edit_field_cb,  pattern="^bir_ef_"),
+                CallbackQueryHandler(biriktir_back_cb,        pattern="^bir_back$"),
+            ],
+            BIRIKTIR_CHECKER: [
+                CallbackQueryHandler(biriktir_checker_cb, pattern="^bir_checker_|^bir_none$|^bir_back$"),
+            ],
+            BIRIKTIR_EDIT_VALUE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, biriktir_edit_value_handler),
+            ],
         },
         fallbacks=[cancel_cmd, CommandHandler("start", start)],
         allow_reentry=True,

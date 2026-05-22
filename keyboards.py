@@ -164,15 +164,61 @@ def faq_javob_kb(faq_id: int, kategoriya_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
-def biriktirish_agents_kb(rows: list) -> InlineKeyboardMarkup:
-    """rows: [(ism, lavozim, filial, kod, user_id, status), ...]"""
+def biriktirish_list_kb(assigned: list, unassigned: list) -> InlineKeyboardMarkup:
+    """assigned: [(agent_id,agent_ism,checker_id,checker_ism,filial,status)]
+       unassigned: [(ism,user_id,filial,kod)]"""
     buttons = []
-    for r in rows:
-        cur = "🔗" if True else ""  # will be set dynamically
+    for a in assigned:
+        status_icon = "✅" if a[5] == "approved" else "🚫"
         buttons.append([InlineKeyboardButton(
-            f"👤 {r[0]} | {r[2]}",
-            callback_data=f"bir_agent_{r[4]}",
+            f"{status_icon} {a[1]} → {a[3] or '?'} | {a[4]}",
+            callback_data=f"bir_detail_{a[0]}",
         )])
+    for u in unassigned:
+        buttons.append([InlineKeyboardButton(
+            f"❗ {u[0]} | {u[2]} (checker yo'q)",
+            callback_data=f"bir_detail_{u[1]}",
+        )])
+    buttons.append([InlineKeyboardButton("➕ Yangi biriktirish", callback_data="bir_new")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def biriktir_detail_kb(agent_id: int, status: str, has_checker: bool) -> InlineKeyboardMarkup:
+    uid = agent_id
+    buttons = [
+        [
+            InlineKeyboardButton("📝 Ism",     callback_data=f"bir_ef_ism_{uid}"),
+            InlineKeyboardButton("💼 Lavozim", callback_data=f"bir_ef_lavozim_{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🔑 Kod",    callback_data=f"bir_ef_kod_{uid}"),
+            InlineKeyboardButton("🏢 Filial", callback_data=f"bir_ef_filial_{uid}"),
+        ],
+    ]
+    if has_checker:
+        buttons.append([
+            InlineKeyboardButton("🔄 Checker almashtirish", callback_data=f"bir_change_{uid}"),
+            InlineKeyboardButton("🗑 O'chirish",             callback_data=f"bir_rm_{uid}"),
+        ])
+    else:
+        buttons.append([InlineKeyboardButton("➕ Checker biriktirish", callback_data=f"bir_change_{uid}")])
+
+    if status == "approved":
+        buttons.append([InlineKeyboardButton("🚫 Bloklash", callback_data=f"bir_block_{uid}")])
+    elif status == "blocked":
+        buttons.append([InlineKeyboardButton("🔓 Blokdan ochish", callback_data=f"bir_unblock_{uid}")])
+
+    buttons.append([InlineKeyboardButton("⬅️ Ro'yxatga qaytish", callback_data="bir_back")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def biriktirish_agents_kb(rows: list) -> InlineKeyboardMarkup:
+    """Yangi biriktirish uchun agent tanlash (biriktirilmaganlar)."""
+    buttons = [[InlineKeyboardButton(
+        f"👤 {r[0]} | {r[2]}",
+        callback_data=f"bir_agent_{r[1]}",
+    )] for r in rows]
+    buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="bir_back")])
     return InlineKeyboardMarkup(buttons)
 
 

@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 from telegram.ext import ContextTypes
-from config import GROUP_CHAT_ID, ADMIN_ID
+from config import GROUP_CHAT_ID, ADMIN_ID, CHECKER_TIMEOUT_SEC
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +46,11 @@ async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-    minutes = 15 * reminder
+    minutes    = 15 * reminder
+    ref_id     = group_id or task_id
     ogohlantirish = (
         f"🚨 *DIQQAT! #SLA Nazorati ({reminder}-eslatma)*\n\n"
-        f"⚠️ #{task_id}-sonli topshiriq kelganiga *{minutes} daqiqa* bo'ldi, "
+        f"⚠️ #{ref_id}-sonli topshiriq kelganiga *{minutes} daqiqa* bo'ldi, "
         f"biroq haligacha belgilanmadi!\n"
         f"👤 Xodim: {x_ism}"
     )
@@ -62,6 +63,9 @@ async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def daily_report_job(context: ContextTypes.DEFAULT_TYPE):
+    # Dushanbada haftalik hisobot yuboriladi, kunlik shart emas
+    if datetime.now().weekday() == 0:
+        return
     from database import get_statistika, get_kunlik_statistika
     stat   = await get_statistika()
     kunlik = await get_kunlik_statistika()
@@ -89,13 +93,73 @@ async def daily_report_job(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Kunlik hisobot yuborishda xato: {e}")
 
 
+async def urgency_timeout_job(context: ContextTypes.DEFAULT_TYPE):
+    """60 soniyada urgency tanlanmasa oddiy deb belgilab checker ga xabar yuboradi."""
+    from database import set_urgency, get_latest_group_fwd_id, get_group_info
+    data       = context.job.data
+    group_id   = data["group_id"]
+    checker_id = data["checker_id"]
+    ism        = data["ism"]
+
+    await set_urgency(group_id, "oddiy")
+    try:
+        fwd_id = await get_latest_group_fwd_id(group_id)
+        if fwd_id:
+            await context.bot.forward_message(
+                chat_id=checker_id, from_chat_id=GROUP_CHAT_ID, message_id=fwd_id
+            )
+        from keyboards import checker_sorov_kb
+        await context.bot.send_message(
+            chat_id=checker_id,
+            text=(
+                f"📋 *{ism}* (Agent) #{group_id} topshiriq yubordi.\n"
+                f"🟢 _Urgency: Oddiy_\nKo'rib chiqing:"
+            ),
+            parse_mode="Markdown",
+            reply_markup=checker_sorov_kb(group_id),
+        )
+    except Exception as e:
+        logger.warning(f"Urgency timeout checker xabari xato: {e}")
+
+
+async def checker_timeout_job(context: ContextTypes.DEFAULT_TYPE):
+    """Checker 30 daqiqada javob bermasa adminga xabar yuboradi."""
+    from database import get_group_info
+    data     = context.job.data
+    group_id = data["group_id"]
+    ism      = data["ism"]
+
+    group = await get_group_info(group_id)
+    if not group or group[4] != "kutilmoqda":
+        return  # Allaqachon bajarilgan
+
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"⏰ *Checker javob bermadi!*\n\n"
+                f"#{group_id}-sonli topshiriq uchun checker 30 daqiqada javob bermadi.\n"
+                f"👤 Agent: *{ism}*"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.warning(f"Checker timeout admin xabari xato: {e}")
+
+
 async def weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
-    """Dushanba 09:00 — har bir checker va uning agentlari bo'yicha haftalik hisobot."""
-    from database import get_checker_weekly_stats
-    rows = await get_checker_weekly_stats()
+    """Dushanba 09:00 — haftalik hisobot (kunlik hisobotni almashtiradi dushanbada)."""
+    from database import get_checker_weekly_stats, get_statistika
+    rows  = await get_checker_weekly_stats()
+    stat  = await get_statistika()
     today = datetime.now().strftime("%d.%m.%Y")
 
-    matn = f"📅 *Haftalik Hisobot ({today})*\n\n"
+    matn = (
+        f"📅 *Haftalik Hisobot ({today})*\n\n"
+        f"📊 Jami: *{stat['jami']}* | ✅ *{stat['bajarilgan']}* | ⏳ *{stat['kutilmoqda']}*\n"
+        f"⏱ O'rtacha: *{stat['ortacha']} daqiqa*\n\n"
+        f"━━━━━━━━━━━━━━\n\n"
+    )
     if not rows:
         matn += "_Bu hafta biriktirish yo'q yoki faollik kuzatilmadi._"
     else:

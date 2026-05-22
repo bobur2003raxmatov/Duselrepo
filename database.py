@@ -779,3 +779,50 @@ async def get_filial_stats(period: str = "haftalik") -> list:
             ORDER BY bajarildi DESC, avg_reyting DESC
         """) as cur:
             return await cur.fetchall()
+
+
+async def get_agent_today_stats(agent_id: int) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END)
+            FROM xabar_guruhi
+            WHERE user_id=? AND date(vaqt)=date('now','localtime')
+        """, (agent_id,)) as cur:
+            bugun, bajarildi = await cur.fetchone()
+    return {"bugun": bugun or 0, "bajarildi": bajarildi or 0}
+
+
+async def get_unassigned_agents() -> list:
+    """Checker biriktirilmagan approved agentlar: [(ism, user_id, filial, kod)]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT x.ism, x.user_id, x.filial, x.kod
+            FROM xodimlar x
+            WHERE x.lavozim='Agent' AND x.status='approved'
+            AND x.user_id NOT IN (SELECT agent_id FROM biriktirish)
+        """) as cur:
+            return await cur.fetchall()
+
+
+async def get_latest_group_fwd_id(group_id: int) -> int | None:
+    """Guruh uchun oxirgi forward qilingan xabar ID sini qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT group_fwd_id FROM xabarlar WHERE group_id=? AND group_fwd_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (group_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+async def get_all_biriktirish_detailed() -> list:
+    """[(agent_id, agent_ism, checker_id, checker_ism, agent_filial, agent_status)]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT b.agent_id, a.ism, b.checker_id, c.ism, a.filial, a.status
+            FROM biriktirish b
+            JOIN xodimlar a ON a.user_id = b.agent_id
+            LEFT JOIN xodimlar c ON c.user_id = b.checker_id
+            ORDER BY a.ism
+        """) as cur:
+            return await cur.fetchall()

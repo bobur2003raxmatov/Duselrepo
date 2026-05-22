@@ -21,9 +21,15 @@ GROUP_TIMEOUT_SEC = 60   # 1 daqiqa — bir guruhga birlashish oynasi
 # Conversation states
 ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN = range(7)
 EDIT_USER, EDIT_FIELD, EDIT_VALUE = range(7, 10)
-SEARCH_QUERY     = 10
-BIRIKTIR_AGENT   = 11
-BIRIKTIR_CHECKER = 12
+SEARCH_QUERY        = 10
+BIRIKTIR_AGENT      = 11
+BIRIKTIR_CHECKER    = 12
+BIRIKTIR_DETAIL     = 13
+BIRIKTIR_EDIT_FIELD = 14
+BIRIKTIR_EDIT_VALUE = 15
+
+URGENCY_TIMEOUT_SEC = 60   # urgency tanlanmasa shu soniyadan keyin oddiy deb hisoblanadi
+CHECKER_TIMEOUT_SEC = 1800 # checker 30 daqiqada javob bermasa admin ogohlantiriladi
 
 # Pagination
 PAGE_SIZE = 10
