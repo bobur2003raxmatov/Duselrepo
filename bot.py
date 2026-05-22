@@ -125,6 +125,16 @@ async def post_init(app: Application):
         BotCommand("start",  "Botni qayta ishga tushirish"),
         BotCommand("cancel", "Jarayonni bekor qilish"),
     ])
+    # General topicda faqat adminlar yoza olsin
+    try:
+        from telegram import ChatPermissions
+        await app.bot.set_chat_permissions(
+            chat_id=GROUP_CHAT_ID,
+            permissions=ChatPermissions(can_send_messages=False),
+        )
+        logger.info("✅ General topic: faqat adminlar yoza oladi.")
+    except Exception as e:
+        logger.warning(f"General topic cheklovini o'rnatishda xato: {e}")
 
     # Daily report at 09:00 Tashkent time (UTC+5)
     tz_uz = datetime.timezone(datetime.timedelta(hours=5))

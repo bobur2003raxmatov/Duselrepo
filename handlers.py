@@ -297,17 +297,22 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=t_id)
 
     async def _log(group_id: int):
-        """General topicga log yozadi."""
+        """General topicga sukut bilan log yozadi (faqat admin uchun)."""
         role_txt   = f"{lavozim} ({kod})" if kod and kod != "KOD YO'Q" else lavozim
         topic_name = f"{ism} — {role_txt} | {filial}"
-        now_str    = datetime.now().strftime("%H:%M")
+        now_str    = datetime.now().strftime("%d.%m %H:%M")
         if msg.text:
-            content = msg.text[:80] + ("..." if len(msg.text) > 80 else "")
+            content = msg.text[:100] + ("..." if len(msg.text) > 100 else "")
         else:
             content = ctype
         log_text = f"[{topic_name}] {ism}: {content} — {now_str}"
         try:
-            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=log_text)
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=log_text,
+                disable_notification=True,   # sukut — hech qanday signal yo'q
+                protect_content=True,        # forward/screenshot oldini oladi
+            )
         except Exception as e:
             logger.warning(f"General topicga log yuborishda xato: {e}")
 
