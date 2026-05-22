@@ -6,6 +6,7 @@ from functools import wraps
 from telegram import Update, BotCommand, ReplyParameters
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
+from telegram.helpers import escape_markdown
 
 import database as db
 from keyboards import (
@@ -23,6 +24,11 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def em(text) -> str:
+    """Markdown v1 uchun foydalanuvchi matnini xavfsiz qiladi."""
+    return escape_markdown(str(text), version=1)
 
 
 def admin_only(func):
@@ -45,10 +51,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    await context.bot.set_my_commands([
-        BotCommand("start",  "Botni qayta ishga tushirish"),
-        BotCommand("cancel", "Jarayonni bekor qilish"),
-    ])
 
     if uid == ADMIN_ID:
         await update.message.reply_text(
@@ -79,8 +81,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return ISM
             await update.message.reply_text(
-                f"✅ Tizim faol, {ism}!\n"
+                f"✅ Tizim faol, {em(ism)}!\n"
                 "Istalgan topshiriq yoki hisobotingizni to'g'ridan-to'g'ri yuboring.",
+                parse_mode="Markdown",
                 reply_markup=remove_kb(),
             )
             return ConversationHandler.END
@@ -279,8 +282,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Aktiv guruh bor-yo'qligini tekshirish (oxirgi 60 soniya)
     active = await db.get_active_group(uid)
 
-    async def _forward_msg(t_id):
-        """Xabarni topicga reply konteksti bilan yoki oddiygina forward qiladi."""
+    async def _fwd(t_id: int):
         if reply_to_group_id:
             try:
                 return await context.bot.copy_message(
@@ -307,7 +309,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 text=f"➕ *{ism}* — {ctype} ({msg_count}-xabar, guruh #{group_id})",
                 parse_mode="Markdown",
             )
-            fwd = await _forward_msg(topic_id)
+            fwd = await _fwd(topic_id)
             await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
             await msg.reply_text(f"✅ #{group_id}-guruhga qo'shildi ({msg_count}-xabar).")
 
@@ -349,7 +351,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 ),
                 parse_mode="Markdown",
             )
-            fwd = await _forward_msg(topic_id)
+            fwd = await _fwd(topic_id)
             await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
             await context.bot.send_message(
                 chat_id=GROUP_CHAT_ID,
@@ -439,8 +441,155 @@ async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ══════════════════════════════════════════════
-# CALLBACK HANDLER
+# CALLBACK HANDLER — helper funksiyalar
 # ══════════════════════════════════════════════
+async def _cb_user_action(query, context, action: str, target_uid: int):
+    if action == "appr":
+        row = await db.get_xodim(target_uid)
+        if not row:
+            await query.edit_message_text("❌ Xodim topilmadi.")
+            return
+        _, _, ism, lavozim, filial, kod = row
+        role_txt = f"{lavozim} ({kod})" if kod and kod != "KOD YO'Q" else lavozim
+        try:
+            topic = await context.bot.create_forum_topic(
+                chat_id=GROUP_CHAT_ID,
+                name=f"{ism} — {role_txt} | {filial}",
+            )
+            await db.approve_xodim(target_uid, topic.message_thread_id)
+            await query.edit_message_text(
+                f"✅ *{em(ism)}* tasdiqlandi. Mavzu: *{em(ism)} — {em(role_txt)} | {em(filial)}*",
+                parse_mode="Markdown",
+            )
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text="🎉 Profilingiz tasdiqlandi! Botdan to'liq foydalanishingiz mumkin.",
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ Guruhda mavzu yaratib bo'lmadi: {e}")
+
+    elif action == "reje":
+        await db.reject_xodim(target_uid)
+        await query.edit_message_text("❌ Ariza rad etildi.")
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text="❌ Arizangiz rad etildi. Qo'shimcha ma'lumot uchun adminga murojaat qiling.",
+            )
+        except Exception as e:
+            logger.warning(f"Rad xabari yuborishda xato (uid={target_uid}): {e}")
+
+    elif action == "block":
+        await db.block_xodim(target_uid)
+        await query.edit_message_text("🚫 Xodim bloklandi.")
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text="🚫 Profilingiz ma'muriyat tomonidan bloklandi.",
+            )
+        except Exception as e:
+            logger.warning(f"Bloklash xabari yuborishda xato (uid={target_uid}): {e}")
+
+    elif action == "unbl":
+        await db.unblock_xodim(target_uid)
+        await query.edit_message_text("🔓 Xodim blokdan chiqarildi.")
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text="🔓 Profilingiz tiklandi! Botdan yana foydalana olasiz.",
+            )
+        except Exception as e:
+            logger.warning(f"Blokdan ochish xabari yuborishda xato (uid={target_uid}): {e}")
+
+
+async def _cb_xod_page(query, page: int):
+    rows = await db.get_approved_xodimlar()
+    if not rows:
+        await query.edit_message_text("👥 Tizimda faol xodimlar hozircha yo'q.")
+        return
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end   = min(start + PAGE_SIZE, total)
+    matn  = f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
+    for r in rows[start:end]:
+        matn += f"👤 *{em(r[0])}* | {em(r[1])} | Kod: `{em(r[3])}` | ID: `{r[4]}`\n"
+    await query.edit_message_text(matn, parse_mode="Markdown", reply_markup=xodimlar_page_inline(page, total))
+
+
+async def _cb_group_action(query, context, action: str, group_id: int):
+    group = await db.get_group_info(group_id)
+    if not group:
+        await query.edit_message_text("❌ Guruh topilmadi.")
+        return
+    user_id, ism, filial, _, holat = group
+
+    if action == "prog":
+        if holat == "bajarildi":
+            await query.answer("Bu guruh allaqachon bajarilgan!", show_alert=True)
+            return
+        await db.update_group_holat(group_id, "jarayonda")
+        await query.edit_message_text(
+            f"🔄 #{group_id}-guruh jarayonga olindi.",
+            reply_markup=group_bajarildi_inline(group_id),
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"🔄 #{group_id}-sonli so'rovingiz ko'rib chiqilmoqda.",
+            )
+        except Exception as e:
+            logger.warning(f"Guruh jarayon xabari yuborishda xato: {e}")
+
+    elif action == "done":
+        await db.update_group_holat(group_id, "bajarildi")
+        main_msg = await db.get_most_important_msg(group_id)
+        await query.edit_message_text(f"✅ #{group_id}-guruh yakunlandi!")
+        try:
+            rp = ReplyParameters(message_id=main_msg[2]) if main_msg else None
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"✅ #{group_id}-sonli so'rovingiz bajarildi!",
+                reply_parameters=rp,
+            )
+        except Exception as e:
+            logger.warning(f"Guruh bajarildi xabari yuborishda xato: {e}")
+
+
+async def _cb_task_action(query, context, action: str, task_id: int):
+    task = await db.get_xabar(task_id)
+    if not task:
+        await query.edit_message_text("❌ Topshiriq topilmadi.")
+        return
+    t_uid, _, msg_id, holat = task
+
+    if action == "prog":
+        if holat == "bajarildi":
+            await query.answer("Bu topshiriq allaqachon bajarilgan!", show_alert=True)
+            return
+        await db.update_xabar_holat(task_id, "jarayonda")
+        await query.edit_message_text(f"🔄 #{task_id} jarayonga olindi.", reply_markup=bajarildi_inline(task_id))
+        try:
+            await context.bot.send_message(
+                chat_id=t_uid,
+                text=f"🔄 #{task_id}-sonli so'rovingiz ko'rib chiqilmoqda.",
+                reply_parameters=ReplyParameters(message_id=msg_id),
+            )
+        except Exception as e:
+            logger.warning(f"Jarayon xabari yuborishda xato (uid={t_uid}): {e}")
+
+    elif action == "done":
+        await db.update_xabar_holat(task_id, "bajarildi")
+        await query.edit_message_text(f"✅ #{task_id}-sonli vazifa yakunlandi!")
+        try:
+            await context.bot.send_message(
+                chat_id=t_uid,
+                text=f"✅ #{task_id}-sonli so'rov bajarildi.",
+                reply_parameters=ReplyParameters(message_id=msg_id),
+            )
+        except Exception as e:
+            logger.warning(f"Bajarildi xabari yuborishda xato (uid={t_uid}): {e}")
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data  = query.data
@@ -449,178 +598,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != ADMIN_ID:
         return
 
-    # ── Xodim tasdiqlash / bloklash ───────────────────────────────
     if data.startswith(("appr_", "reje_", "block_", "unbl_")):
-        action, target_uid = data.split("_", 1)[0], int(data.split("_", 1)[1])
+        action, uid = data.split("_", 1)[0], int(data.split("_", 1)[1])
+        await _cb_user_action(query, context, action, uid)
 
-        if action == "appr":
-            row = await db.get_xodim(target_uid)
-            if not row:
-                await query.edit_message_text("❌ Xodim topilmadi.")
-                return
-            _, _, ism, lavozim, filial, kod = row
-            role_txt = f"{lavozim} ({kod})" if kod and kod != "KOD YO'Q" else lavozim
-            try:
-                topic = await context.bot.create_forum_topic(
-                    chat_id=GROUP_CHAT_ID,
-                    name=f"{ism} — {role_txt} | {filial}",
-                )
-                await db.approve_xodim(target_uid, topic.message_thread_id)
-                await query.edit_message_text(
-                    f"✅ {ism} tasdiqlandi. Shaxsiy mavzu *{ism} — {role_txt} | {filial}* ochildi.",
-                    parse_mode="Markdown",
-                )
-                await context.bot.send_message(
-                    chat_id=target_uid,
-                    text="🎉 Profilingiz tasdiqlandi! Botdan to'liq foydalanishingiz mumkin.",
-                )
-            except Exception as e:
-                await query.edit_message_text(f"❌ Guruhda mavzu yaratib bo'lmadi: {e}")
+    elif data.startswith("xod_page_"):
+        await _cb_xod_page(query, int(data.split("_")[2]))
 
-        elif action == "reje":
-            await db.reject_xodim(target_uid)
-            await query.edit_message_text("❌ Ariza rad etildi.")
-            try:
-                await context.bot.send_message(
-                    chat_id=target_uid,
-                    text="❌ Arizangiz rad etildi. Qo'shimcha ma'lumot uchun adminga murojaat qiling.",
-                )
-            except Exception as e:
-                logger.warning(f"Rad xabari yuborishda xato (uid={target_uid}): {e}")
+    elif data.startswith(("grp_prog_", "grp_done_")):
+        parts = data.split("_")
+        await _cb_group_action(query, context, parts[1], int(parts[2]))
 
-        elif action == "block":
-            await db.block_xodim(target_uid)
-            await query.edit_message_text("🚫 Xodim bloklandi.")
-            try:
-                await context.bot.send_message(
-                    chat_id=target_uid,
-                    text="🚫 Profilingiz ma'muriyat tomonidan bloklandi.",
-                )
-            except Exception as e:
-                logger.warning(f"Bloklash xabari yuborishda xato (uid={target_uid}): {e}")
-
-        elif action == "unbl":
-            await db.unblock_xodim(target_uid)
-            await query.edit_message_text("🔓 Xodim blokdan chiqarildi.")
-            try:
-                await context.bot.send_message(
-                    chat_id=target_uid,
-                    text="🔓 Profilingiz tiklandi! Botdan yana foydalana olasiz.",
-                )
-            except Exception as e:
-                logger.warning(f"Blokdan ochish xabari yuborishda xato (uid={target_uid}): {e}")
-        return
-
-    # ── Xodimlar sahifalash ───────────────────────────────────────
-    if data.startswith("xod_page_"):
-        page = int(data.split("_")[2])
-        rows = await db.get_approved_xodimlar()
-        if not rows:
-            await query.edit_message_text("👥 Tizimda faol xodimlar hozircha yo'q.")
-            return
-        total = len(rows)
-        start = page * PAGE_SIZE
-        end   = min(start + PAGE_SIZE, total)
-        matn  = f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
-        for r in rows[start:end]:
-            matn += f"👤 *{r[0]}* | {r[1]} | Kod: `{r[3]}` | ID: `{r[4]}`\n"
-        await query.edit_message_text(
-            matn,
-            parse_mode="Markdown",
-            reply_markup=xodimlar_page_inline(page, total),
-        )
-        return
-
-    # ── Guruh holati ─────────────────────────────────────────────
-    if data.startswith(("grp_prog_", "grp_done_")):
-        parts    = data.split("_")
-        action   = parts[1]           # "prog" yoki "done"
-        group_id = int(parts[2])
-
-        group = await db.get_group_info(group_id)
-        if not group:
-            await query.edit_message_text("❌ Guruh topilmadi.")
-            return
-        user_id, ism, filial, g_topic_id, holat = group
-
-        if action == "prog":
-            if holat == "bajarildi":
-                await query.answer("Bu guruh allaqachon bajarilgan!", show_alert=True)
-                return
-            await db.update_group_holat(group_id, "jarayonda")
-            await query.edit_message_text(
-                f"🔄 #{group_id}-guruh jarayonga olindi.",
-                reply_markup=group_bajarildi_inline(group_id),
-            )
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"🔄 #{group_id}-sonli so'rovingiz ko'rib chiqilmoqda.",
-                )
-            except Exception as e:
-                logger.warning(f"Guruh jarayon xabari yuborishda xato: {e}")
-
-        elif action == "done":
-            await db.update_group_holat(group_id, "bajarildi")
-
-            # Eng muhim xabarni topib reply qilamiz
-            main_msg = await db.get_most_important_msg(group_id)
-            await query.edit_message_text(f"✅ #{group_id}-guruh yakunlandi!")
-            try:
-                if main_msg:
-                    _, xabar_turi, msg_id = main_msg
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"✅ #{group_id}-sonli so'rovingiz bajarildi!",
-                        reply_parameters=ReplyParameters(message_id=msg_id),
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"✅ #{group_id}-sonli so'rovingiz bajarildi!",
-                    )
-            except Exception as e:
-                logger.warning(f"Guruh bajarildi xabari yuborishda xato: {e}")
-        return
-
-    # ── Vazifa holati (eski individual xabarlar uchun) ────────────
-    if data.startswith(("prog_", "done_")):
+    elif data.startswith(("prog_", "done_")):
         action, task_id = data.split("_", 1)[0], int(data.split("_", 1)[1])
-        task = await db.get_xabar(task_id)
-        if not task:
-            await query.edit_message_text("❌ Topshiriq topilmadi.")
-            return
-        t_uid, x_ism, msg_id, holat = task
-
-        if action == "prog":
-            if holat == "bajarildi":
-                await query.answer("Bu topshiriq allaqachon bajarilgan!", show_alert=True)
-                return
-            await db.update_xabar_holat(task_id, "jarayonda")
-            await query.edit_message_text(
-                f"🔄 #{task_id} jarayonga olindi.",
-                reply_markup=bajarildi_inline(task_id),
-            )
-            try:
-                await context.bot.send_message(
-                    chat_id=t_uid,
-                    text=f"🔄 #{task_id}-sonli so'rovingiz ko'rib chiqish jarayoniga o'tkazildi.",
-                    reply_parameters=ReplyParameters(message_id=msg_id),
-                )
-            except Exception as e:
-                logger.warning(f"Xodimga jarayon xabari yuborishda xato (uid={t_uid}): {e}")
-
-        elif action == "done":
-            await db.update_xabar_holat(task_id, "bajarildi")
-            await query.edit_message_text(f"✅ #{task_id}-sonli vazifa yakunlandi!")
-            try:
-                await context.bot.send_message(
-                    chat_id=t_uid,
-                    text=f"✅ #{task_id}-sonli so'rov muvaffaqiyatli bajarildi.",
-                    reply_parameters=ReplyParameters(message_id=msg_id),
-                )
-            except Exception as e:
-                logger.warning(f"Xodimga bajarildi xabari yuborishda xato (uid={t_uid}): {e}")
+        await _cb_task_action(query, context, action, task_id)
 
 
 # ══════════════════════════════════════════════
@@ -833,20 +824,22 @@ async def admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.strip()
-    rows  = await db.search_xodimlar(query)
+    query_text = update.message.text.strip()
+    rows = await db.search_xodimlar(query_text)
 
     if not rows:
         await update.message.reply_text(
-            f"❌ *'{query}'* bo'yicha hech qanday xodim topilmadi.",
+            f"❌ *'{em(query_text)}'* bo'yicha xodim topilmadi.\n"
+            "Qayta kiriting yoki /cancel:",
             parse_mode="Markdown",
-            reply_markup=admin_kb(),
         )
-        return ConversationHandler.END
+        return SEARCH_QUERY  # Qayta kiritish imkoniyati
 
-    matn = f"🔍 *'{query}' bo'yicha natijalar ({len(rows)} ta):*\n\n"
+    STATUS_EMOJI = {"approved": "✅", "pending": "⏳", "blocked": "🚫"}
+    matn = f"🔍 *'{em(query_text)}' bo'yicha natijalar ({len(rows)} ta):*\n\n"
     for r in rows:
-        matn += f"👤 *{r[0]}* | {r[1]} | 🏢 {r[2]} | Kod: `{r[3]}` | ID: `{r[4]}`\n"
+        s = STATUS_EMOJI.get(r[5], "❓")
+        matn += f"{s} *{em(r[0])}* | {em(r[1])} | 🏢 {em(r[2])} | Kod: `{em(r[3])}` | ID: `{r[4]}`\n"
 
     await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=admin_kb())
     return ConversationHandler.END

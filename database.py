@@ -1,6 +1,6 @@
 import aiosqlite
 from datetime import datetime
-from config import DB_PATH
+from config import DB_PATH, GROUP_TIMEOUT_SEC
 
 
 async def init_db():
@@ -182,16 +182,17 @@ async def update_xodim_field(user_id: int, field: str, value: str):
 
 
 async def search_xodimlar(query: str) -> list:
+    """Returns (ism, lavozim, filial, kod, user_id, status)"""
     async with aiosqlite.connect(DB_PATH) as db:
         if query.isdigit():
             async with db.execute(
-                "SELECT ism, lavozim, filial, kod, user_id FROM xodimlar WHERE user_id=?",
+                "SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar WHERE user_id=?",
                 (int(query),)
             ) as cur:
                 return await cur.fetchall()
         else:
             async with db.execute(
-                "SELECT ism, lavozim, filial, kod, user_id FROM xodimlar WHERE ism LIKE ?",
+                "SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar WHERE ism LIKE ?",
                 (f"%{query}%",)
             ) as cur:
                 return await cur.fetchall()
@@ -244,15 +245,15 @@ async def create_xabar_guruhi(user_id: int, ism: str, filial: str, topic_id: int
 
 
 async def get_active_group(user_id: int) -> tuple | None:
-    """Oxirgi 60 soniya ichida ochiq guruh bo'lsa (group_id, topic_id) qaytaradi."""
+    """Oxirgi GROUP_TIMEOUT_SEC soniya ichida ochiq guruh bo'lsa (group_id, topic_id) qaytaradi."""
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("""
+        async with db.execute(f"""
             SELECT g.id, g.topic_id
             FROM xabar_guruhi g
             WHERE g.user_id = ? AND g.holat = 'kutilmoqda'
             AND (
                 SELECT MAX(x.vaqt) FROM xabarlar x WHERE x.group_id = g.id
-            ) >= datetime('now', 'localtime', '-60 seconds')
+            ) >= datetime('now', 'localtime', '-{GROUP_TIMEOUT_SEC} seconds')
             ORDER BY g.id DESC LIMIT 1
         """, (user_id,)) as cur:
             return await cur.fetchone()
@@ -415,13 +416,13 @@ async def get_all_xabarlar_for_excel() -> list:
 
 
 async def get_kunlik_statistika() -> list:
-    """Har bir xodim uchun bugungi xabar / bajarilgan soni."""
+    """Har bir xodim uchun bugungi guruh / bajarilgan soni."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT xodim_name, filial,
+            SELECT ism, filial,
                    COUNT(*) AS jami,
                    SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) AS bajarildi
-            FROM xabarlar
+            FROM xabar_guruhi
             WHERE date(vaqt) = date('now', 'localtime')
             GROUP BY user_id
             ORDER BY jami DESC
@@ -431,17 +432,28 @@ async def get_kunlik_statistika() -> list:
 
 async def get_statistika() -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
+        # Yangi tizim: guruhlar
         async with db.execute(
-            "SELECT COUNT(id), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) FROM xabarlar"
+            "SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) FROM xabar_guruhi"
         ) as cur:
-            jami, bajarilgan = await cur.fetchone()
+            g_jami, g_baj = await cur.fetchone()
+
+        # Eski tizim: guruhsiz xabarlar
         async with db.execute(
-            "SELECT vaqt, javob_vaqt FROM xabarlar WHERE holat='bajarildi'"
+            "SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) FROM xabarlar WHERE group_id IS NULL"
         ) as cur:
+            m_jami, m_baj = await cur.fetchone()
+
+        # O'rtacha vaqt (guruhlar + eski xabarlar)
+        async with db.execute("""
+            SELECT vaqt, javob_vaqt FROM xabar_guruhi WHERE holat='bajarildi'
+            UNION ALL
+            SELECT vaqt, javob_vaqt FROM xabarlar WHERE holat='bajarildi' AND group_id IS NULL
+        """) as cur:
             times = await cur.fetchall()
 
-    jami       = jami or 0
-    bajarilgan = bajarilgan or 0
+    jami       = (g_jami or 0) + (m_jami or 0)
+    bajarilgan = (g_baj or 0) + (m_baj or 0)
     total_min  = 0.0
     for t_kir, t_baj in times:
         try:

@@ -2,6 +2,8 @@ import logging
 import datetime
 import warnings
 
+from telegram import BotCommand
+
 from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=PTBUserWarning)
 
@@ -119,6 +121,10 @@ def build_application() -> Application:
 async def post_init(app: Application):
     await init_db()
     logger.info("✅ Ma'lumotlar bazasi tayyor.")
+    await app.bot.set_my_commands([
+        BotCommand("start",  "Botni qayta ishga tushirish"),
+        BotCommand("cancel", "Jarayonni bekor qilish"),
+    ])
 
     # Daily report at 09:00 Tashkent time (UTC+5)
     tz_uz = datetime.timezone(datetime.timedelta(hours=5))
