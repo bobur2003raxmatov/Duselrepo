@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 from config import (
-    TOKEN,
+    TOKEN, GROUP_CHAT_ID,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
     EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
 )
@@ -106,7 +106,7 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel Eksport$"),          admin_excel_eksport))
     app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, admin_guruh_javob))
+    app.add_handler(MessageHandler(filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
 
     return app
