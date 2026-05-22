@@ -428,6 +428,54 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # ══════════════════════════════════════════════
+# REAKSIYALARNI MIRROR QILISH
+# ══════════════════════════════════════════════
+async def reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Xodim private chatda reaksiya qo'ysa → guruh topicga mirror.
+    Admin guruh topicda reaksiya qo'ysa → xodim private chatiga mirror.
+    """
+    rxn = update.message_reaction
+    if not rxn or not rxn.user:
+        return
+
+    uid    = rxn.user.id
+    cid    = rxn.chat.id
+    msg_id = rxn.message_id
+    new_rx = rxn.new_reaction  # List[ReactionType]
+
+    # ── Admin guruhda reaksiya → xodimga mirror ──────────────────
+    if cid == GROUP_CHAT_ID and uid == ADMIN_ID:
+        xabar = await db.get_xabar_by_group_fwd_id(msg_id)
+        if not xabar:
+            return
+        employee_uid, employee_msg_id = xabar
+        try:
+            await context.bot.set_message_reaction(
+                chat_id=employee_uid,
+                message_id=employee_msg_id,
+                reaction=new_rx,
+            )
+        except Exception as e:
+            logger.warning(f"Admin→xodim reaksiya mirror xato: {e}")
+        return
+
+    # ── Xodim private chatda reaksiya → guruhga mirror ───────────
+    if cid != GROUP_CHAT_ID and uid != ADMIN_ID:
+        group_msg_id = await db.get_group_msg_id_by_private(uid, msg_id)
+        if not group_msg_id:
+            return
+        try:
+            await context.bot.set_message_reaction(
+                chat_id=GROUP_CHAT_ID,
+                message_id=group_msg_id,
+                reaction=new_rx,
+            )
+        except Exception as e:
+            logger.warning(f"Xodim→guruh reaksiya mirror xato: {e}")
+
+
+# ══════════════════════════════════════════════
 # ADMIN GURUH TOPIC JAVOBLARI → XODIMGA YO'NALTIRISH
 # ══════════════════════════════════════════════
 async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):

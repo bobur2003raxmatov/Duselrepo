@@ -2,7 +2,7 @@ import logging
 import datetime
 import warnings
 
-from telegram import BotCommand
+from telegram import BotCommand, ChatPermissions, Update
 
 from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=PTBUserWarning)
@@ -13,6 +13,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
+    MessageReactionHandler,
     filters,
 )
 
@@ -24,6 +25,7 @@ from config import (
 from database import init_db
 from utils import daily_report_job
 from handlers import (
+    reaction_handler,
     start, cancel,
     ism_olish, lavozim_olish, kod_olish,
     filial_olish, telefon_olish, telefon2_olish,
@@ -111,6 +113,7 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel Eksport$"),          admin_excel_eksport))
+    app.add_handler(MessageReactionHandler(reaction_handler))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
@@ -127,14 +130,17 @@ async def post_init(app: Application):
     ])
     # General topicda faqat adminlar yoza olsin
     try:
-        from telegram import ChatPermissions
         await app.bot.set_chat_permissions(
             chat_id=GROUP_CHAT_ID,
-            permissions=ChatPermissions(can_send_messages=False),
+            permissions=ChatPermissions(
+                can_send_messages=False,
+                can_send_other_messages=False,  # sticker/GIF ham yo'q (faqat admin)
+            ),
         )
         logger.info("✅ General topic: faqat adminlar yoza oladi.")
     except Exception as e:
         logger.warning(f"General topic cheklovini o'rnatishda xato: {e}")
+
 
     # Daily report at 09:00 Tashkent time (UTC+5)
     tz_uz = datetime.timezone(datetime.timedelta(hours=5))
@@ -158,7 +164,10 @@ def main():
     app = build_application()
     app.post_init = post_init
     app.add_error_handler(error_handler)
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
