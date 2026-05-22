@@ -64,6 +64,26 @@ async def init_db():
         """)
         await db.commit()
 
+        # FAQ jadvallari
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS faq_kategoriya (
+                id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                emoji  TEXT    DEFAULT '📌',
+                nomi   TEXT,
+                tartib INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS faq (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                kategoriya_id INTEGER,
+                savol         TEXT,
+                javob         TEXT,
+                tartib        INTEGER DEFAULT 0
+            )
+        """)
+        await db.commit()
+
         # Admin xabarlari → xodim shaxsiy chati mapping jadvali
         await db.execute("""
             CREATE TABLE IF NOT EXISTS admin_msg_map (
@@ -437,3 +457,63 @@ async def get_statistika() -> dict:
         "kutilmoqda": jami - bajarilgan,
         "ortacha":    ortacha,
     }
+
+
+# ── FAQ ──────────────────────────────────────────────────────────
+async def get_faq_kategoriyalar() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id, emoji, nomi FROM faq_kategoriya ORDER BY tartib, id"
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_faq_savollar(kategoriya_id: int) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id, savol FROM faq WHERE kategoriya_id=? ORDER BY tartib, id",
+            (kategoriya_id,)
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_faq_item(faq_id: int) -> tuple | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT savol, javob, kategoriya_id FROM faq WHERE id=?",
+            (faq_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def add_faq_kategoriya(emoji: str, nomi: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO faq_kategoriya (emoji, nomi) VALUES (?, ?)",
+            (emoji, nomi)
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def add_faq(kategoriya_id: int, savol: str, javob: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO faq (kategoriya_id, savol, javob) VALUES (?, ?, ?)",
+            (kategoriya_id, savol, javob)
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def delete_faq(faq_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM faq WHERE id=?", (faq_id,))
+        await db.commit()
+
+
+async def delete_faq_kategoriya(kategoriya_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM faq WHERE kategoriya_id=?", (kategoriya_id,))
+        await db.execute("DELETE FROM faq_kategoriya WHERE id=?", (kategoriya_id,))
+        await db.commit()

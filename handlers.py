@@ -9,10 +9,11 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import database as db
 from keyboards import (
-    lavozim_kb, filial_kb, telefon_kb, telefon2_kb, remove_kb,
+    lavozim_kb, filial_kb, telefon_kb, telefon2_kb, remove_kb, xodim_kb,
     admin_kb, edit_field_kb, edit_select_kb, xodimlar_page_inline,
     sorov_inline, bajarildi_inline, tasdiq_inline, unblock_inline,
     group_sorov_inline, group_bajarildi_inline,
+    faq_kategoriyalar_kb, faq_savollar_kb, faq_javob_kb,
 )
 from utils import is_topic_valid, check_sla_timeout, generate_excel
 from config import (
@@ -81,7 +82,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ Tizim faol, {ism}!\n"
                 "Istalgan topshiriq yoki hisobotingizni to'g'ridan-to'g'ri yuboring.",
-                reply_markup=remove_kb(),
+                reply_markup=xodim_kb(),
             )
             return ConversationHandler.END
 
@@ -473,6 +474,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=target_uid,
                     text="🎉 Profilingiz tasdiqlandi! Botdan to'liq foydalanishingiz mumkin.",
+                    reply_markup=xodim_kb(),
                 )
             except Exception as e:
                 await query.edit_message_text(f"❌ Guruhda mavzu yaratib bo'lmadi: {e}")
@@ -528,6 +530,52 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             matn,
             parse_mode="Markdown",
             reply_markup=xodimlar_page_inline(page, total),
+        )
+        return
+
+    # ── FAQ navigatsiya ───────────────────────────────────────────
+    if data == "faq_back":
+        rows = await db.get_faq_kategoriyalar()
+        if not rows:
+            await query.edit_message_text("_Hozircha savollar mavjud emas._", parse_mode="Markdown")
+            return
+        await query.edit_message_text(
+            "❓ *Ko'p So'raladigan Savollar*\n\nQaysi bo'limni ko'rmoqchisiz?",
+            parse_mode="Markdown",
+            reply_markup=faq_kategoriyalar_kb(rows),
+        )
+        return
+
+    if data.startswith("faq_kat_"):
+        kat_id = int(data.split("_")[2])
+        savollar = await db.get_faq_savollar(kat_id)
+        if not savollar:
+            await query.edit_message_text(
+                "Bu bo'limda hozircha savollar yo'q.",
+                reply_markup=faq_javob_kb(0, kat_id),
+            )
+            return
+        # Get category name for header
+        kat_rows = await db.get_faq_kategoriyalar()
+        kat_nomi = next((f"{r[1]} {r[2]}" for r in kat_rows if r[0] == kat_id), "")
+        await query.edit_message_text(
+            f"*{kat_nomi}*\n\nSavolni tanlang:",
+            parse_mode="Markdown",
+            reply_markup=faq_savollar_kb(savollar, kat_id),
+        )
+        return
+
+    if data.startswith("faq_sav_"):
+        faq_id = int(data.split("_")[2])
+        item = await db.get_faq_item(faq_id)
+        if not item:
+            await query.edit_message_text("Savol topilmadi.")
+            return
+        savol, javob, kat_id = item
+        await query.edit_message_text(
+            f"❓ *{savol}*\n\n{javob}",
+            parse_mode="Markdown",
+            reply_markup=faq_javob_kb(faq_id, kat_id),
         )
         return
 
@@ -830,6 +878,26 @@ async def admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=remove_kb(),
     )
     return SEARCH_QUERY
+
+
+# ══════════════════════════════════════════════
+# FAQ — KO'P SO'RALADIGAN SAVOLLAR
+# ══════════════════════════════════════════════
+async def faq_menyu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """❓ Ko'p So'raladigan Savollar tugmasi bosilganda."""
+    rows = await db.get_faq_kategoriyalar()
+    if not rows:
+        await update.message.reply_text(
+            "❓ *Ko'p So'raladigan Savollar*\n\n"
+            "_Hozircha savollar mavjud emas._",
+            parse_mode="Markdown",
+        )
+        return
+    await update.message.reply_text(
+        "❓ *Ko'p So'raladigan Savollar*\n\nQaysi bo'limni ko'rmoqchisiz?",
+        parse_mode="Markdown",
+        reply_markup=faq_kategoriyalar_kb(rows),
+    )
 
 
 async def search_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

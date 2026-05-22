@@ -45,6 +45,13 @@ def remove_kb() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
+def xodim_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["❓ Ko'p So'raladigan Savollar"]],
+        resize_keyboard=True,
+    )
+
+
 def admin_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
@@ -134,6 +141,26 @@ def tasdiq_inline(user_id: int) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton("🚫 Bloklash", callback_data=f"block_{user_id}")],
     ])
+
+
+def faq_kategoriyalar_kb(rows: list) -> InlineKeyboardMarkup:
+    """rows: [(id, emoji, nomi), ...]"""
+    buttons = [[InlineKeyboardButton(f"{r[1]} {r[2]}", callback_data=f"faq_kat_{r[0]}")] for r in rows]
+    return InlineKeyboardMarkup(buttons)
+
+
+def faq_savollar_kb(rows: list, kategoriya_id: int) -> InlineKeyboardMarkup:
+    """rows: [(id, savol), ...]"""
+    buttons = [[InlineKeyboardButton(r[1], callback_data=f"faq_sav_{r[0]}")] for r in rows]
+    buttons.append([InlineKeyboardButton("⬅️ Kategoriyalar", callback_data="faq_back")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def faq_javob_kb(faq_id: int, kategoriya_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Savollar", callback_data=f"faq_kat_{kategoriya_id}"),
+        InlineKeyboardButton("🏠 Bosh menyu", callback_data="faq_back"),
+    ]])
 
 
 def unblock_inline(user_id: int) -> InlineKeyboardMarkup:

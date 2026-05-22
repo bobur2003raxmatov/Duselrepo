@@ -33,6 +33,7 @@ from handlers import (
     admin_kutilayotganlar, admin_bloklanganlar,
     admin_excel_eksport,
     admin_search, search_query_handler,
+    faq_menyu,
     start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
 )
 
@@ -109,6 +110,7 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel Eksport$"),          admin_excel_eksport))
+    app.add_handler(MessageHandler(filters.Regex(r"^❓ Ko'p So'raladigan Savollar$"), faq_menyu))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
