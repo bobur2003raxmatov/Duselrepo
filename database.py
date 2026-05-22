@@ -35,12 +35,34 @@ async def init_db():
         """)
         await db.commit()
 
-        # Migration: group_fwd_id ustuni (eski bazalarda yo'q bo'lishi mumkin)
+        # Migration: group_fwd_id ustuni
         try:
             await db.execute("ALTER TABLE xabarlar ADD COLUMN group_fwd_id INTEGER")
             await db.commit()
         except Exception:
             pass
+
+        # Migration: group_id ustuni
+        try:
+            await db.execute("ALTER TABLE xabarlar ADD COLUMN group_id INTEGER")
+            await db.commit()
+        except Exception:
+            pass
+
+        # Xabar guruhlari jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS xabar_guruhi (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER,
+                ism        TEXT,
+                filial     TEXT,
+                topic_id   INTEGER,
+                holat      TEXT DEFAULT 'kutilmoqda',
+                vaqt       TEXT,
+                javob_vaqt TEXT
+            )
+        """)
+        await db.commit()
 
         # Admin xabarlari → xodim shaxsiy chati mapping jadvali
         await db.execute("""
@@ -189,14 +211,99 @@ async def get_all_xodimlar_for_excel() -> list:
             return await cur.fetchall()
 
 
+# ── Xabar guruhi ────────────────────────────────────────────────
+async def create_xabar_guruhi(user_id: int, ism: str, filial: str, topic_id: int) -> int:
+    vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO xabar_guruhi (user_id, ism, filial, topic_id, holat, vaqt) VALUES (?, ?, ?, ?, 'kutilmoqda', ?)",
+            (user_id, ism, filial, topic_id, vaqt)
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_active_group(user_id: int) -> tuple | None:
+    """Oxirgi 60 soniya ichida ochiq guruh bo'lsa (group_id, topic_id) qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT g.id, g.topic_id
+            FROM xabar_guruhi g
+            WHERE g.user_id = ? AND g.holat = 'kutilmoqda'
+            AND (
+                SELECT MAX(x.vaqt) FROM xabarlar x WHERE x.group_id = g.id
+            ) >= datetime('now', 'localtime', '-60 seconds')
+            ORDER BY g.id DESC LIMIT 1
+        """, (user_id,)) as cur:
+            return await cur.fetchone()
+
+
+async def get_group_info(group_id: int) -> tuple | None:
+    """Returns (user_id, ism, filial, topic_id, holat)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, ism, filial, topic_id, holat FROM xabar_guruhi WHERE id=?",
+            (group_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def update_group_holat(group_id: int, holat: str):
+    javob_vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if holat == "bajarildi" else None
+    async with aiosqlite.connect(DB_PATH) as db:
+        if javob_vaqt:
+            await db.execute(
+                "UPDATE xabar_guruhi SET holat=?, javob_vaqt=? WHERE id=?",
+                (holat, javob_vaqt, group_id)
+            )
+            await db.execute(
+                "UPDATE xabarlar SET holat=?, javob_vaqt=? WHERE group_id=?",
+                (holat, javob_vaqt, group_id)
+            )
+        else:
+            await db.execute("UPDATE xabar_guruhi SET holat=? WHERE id=?", (holat, group_id))
+            await db.execute("UPDATE xabarlar SET holat=? WHERE group_id=?", (holat, group_id))
+        await db.commit()
+
+
+async def get_most_important_msg(group_id: int) -> tuple | None:
+    """Guruhdan eng muhim xabarni qaytaradi: rasm > video > fayl > ovoz > matn."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT id, xabar_turi, msg_id,
+                   CASE xabar_turi
+                       WHEN '📷 Rasm'         THEN 1
+                       WHEN '🎥 Video'         THEN 2
+                       WHEN '⭕ Video-xabar'   THEN 3
+                       WHEN '📄 Fayl'          THEN 4
+                       WHEN '🎙 Ovozli xabar'  THEN 5
+                       WHEN '🎭 Sticker'       THEN 6
+                       ELSE                        7
+                   END AS priority
+            FROM xabarlar WHERE group_id = ?
+            ORDER BY priority ASC, id DESC
+            LIMIT 1
+        """, (group_id,)) as cur:
+            return await cur.fetchone()
+
+
+async def count_group_msgs(group_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM xabarlar WHERE group_id=?", (group_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+
 # ── Xabar ────────────────────────────────────────────────────────
-async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id) -> int:
+async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id, group_id=None) -> int:
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("""
-            INSERT INTO xabarlar (user_id, xodim_name, filial, xabar_turi, vaqt, holat, msg_id)
-            VALUES (?, ?, ?, ?, ?, 'kutilmoqda', ?)
-        """, (user_id, ism, filial, xabar_turi, vaqt, msg_id))
+            INSERT INTO xabarlar (user_id, xodim_name, filial, xabar_turi, vaqt, holat, msg_id, group_id)
+            VALUES (?, ?, ?, ?, ?, 'kutilmoqda', ?, ?)
+        """, (user_id, ism, filial, xabar_turi, vaqt, msg_id, group_id))
         await db.commit()
         return cur.lastrowid
 

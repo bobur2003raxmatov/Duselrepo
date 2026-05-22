@@ -15,7 +15,8 @@ FILIALLAR = [
 
 LAVOZIMLAR = ["Filial Rahbari", "Supervisor", "Agent", "Operator", "Distribyutor"]
 
-SLA_TIMEOUT_SEC = 900  # 15 daqiqa
+SLA_TIMEOUT_SEC   = 900  # 15 daqiqa
+GROUP_TIMEOUT_SEC = 60   # 1 daqiqa — bir guruhga birlashish oynasi
 
 # Conversation states
 ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN = range(7)

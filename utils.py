@@ -27,14 +27,23 @@ async def is_topic_valid(context: ContextTypes.DEFAULT_TYPE, topic_id: int | Non
 
 
 async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
-    from database import get_xabar
-    job     = context.job
-    task_id = job.data["task_id"]
-    x_ism   = job.data["x_ism"]
+    from database import get_xabar, get_group_info
+    job      = context.job
+    x_ism    = job.data["x_ism"]
     reminder = job.data.get("reminder", 1)
 
-    row = await get_xabar(task_id)
-    if not row or row[3] != "kutilmoqda":
+    group_id = job.data.get("group_id")
+    task_id  = job.data.get("task_id")  # eski xabarlar uchun
+
+    if group_id:
+        row = await get_group_info(group_id)
+        if not row or row[4] != "kutilmoqda":
+            return
+    elif task_id:
+        row = await get_xabar(task_id)
+        if not row or row[3] != "kutilmoqda":
+            return
+    else:
         return
 
     minutes = 15 * reminder

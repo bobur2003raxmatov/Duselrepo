@@ -12,10 +12,12 @@ from keyboards import (
     lavozim_kb, filial_kb, telefon_kb, telefon2_kb, remove_kb,
     admin_kb, edit_field_kb, edit_select_kb, xodimlar_page_inline,
     sorov_inline, bajarildi_inline, tasdiq_inline, unblock_inline,
+    group_sorov_inline, group_bajarildi_inline,
 )
 from utils import is_topic_valid, check_sla_timeout, generate_excel
 from config import (
-    ADMIN_ID, GROUP_CHAT_ID, FILIALLAR, LAVOZIMLAR, SLA_TIMEOUT_SEC, PAGE_SIZE,
+    ADMIN_ID, GROUP_CHAT_ID, FILIALLAR, LAVOZIMLAR,
+    SLA_TIMEOUT_SEC, GROUP_TIMEOUT_SEC, PAGE_SIZE,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
     EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
 )
@@ -269,92 +271,136 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif msg.sticker:    ctype = "🎭 Sticker"
     else:                ctype = "💬 Matn"
 
-    # Xodim admin xabariga reply qilyaptimi?
+    # Reply konteksti (admin xabariga reply qilyaptimi?)
     reply_to_group_id = None
     if msg.reply_to_message:
         reply_to_group_id = await db.get_group_msg_id_by_private(uid, msg.reply_to_message.message_id)
 
-    task_id = await db.insert_xabar(uid, ism, filial, ctype, msg.message_id)
+    # Aktiv guruh bor-yo'qligini tekshirish (oxirgi 60 soniya)
+    active = await db.get_active_group(uid)
 
-    try:
-        now_hm = datetime.now().strftime("%H:%M")
-        await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            message_thread_id=topic_id,
-            text=(
-                f"📨 *Xodim:* {ism}  |  #{task_id}\n"
-                f"🕒 *Tushgan Vaqt:* {now_hm}  |  {ctype}"
-            ),
-            parse_mode="Markdown",
-        )
-        # Reply konteksti bilan yoki oddiy forward
+    async def _forward_msg(t_id):
+        """Xabarni topicga reply konteksti bilan yoki oddiygina forward qiladi."""
         if reply_to_group_id:
             try:
-                fwd = await context.bot.copy_message(
+                return await context.bot.copy_message(
                     chat_id=GROUP_CHAT_ID,
                     from_chat_id=msg.chat_id,
                     message_id=msg.message_id,
-                    message_thread_id=topic_id,
+                    message_thread_id=t_id,
                     reply_parameters=ReplyParameters(message_id=reply_to_group_id),
                 )
             except BadRequest:
-                fwd = await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=topic_id)
-        else:
-            fwd = await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=topic_id)
-        await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
-        await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            message_thread_id=topic_id,
-            text=f"#{task_id}-sonli xabar holati:",
-            reply_markup=sorov_inline(task_id),
-        )
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=(
-                f"📬 *Yangi topshiriq!*\n"
-                f"👤 Xodim: {ism}  |  🔢 #{task_id}\n"
-                f"⏳ _15 daqiqalik nazorat boshlandi!_"
-            ),
-            parse_mode="Markdown",
-            reply_markup=sorov_inline(task_id),
-        )
-        await msg.reply_text(
-            f"✅ #{task_id}-sonli so'rovingiz qabul qilindi. Admin javobini kuting."
-        )
-        context.job_queue.run_once(
-            check_sla_timeout,
-            when=SLA_TIMEOUT_SEC,
-            data={"task_id": task_id, "x_ism": ism, "reminder": 1},
-        )
-        context.job_queue.run_once(
-            check_sla_timeout,
-            when=SLA_TIMEOUT_SEC * 2,
-            data={"task_id": task_id, "x_ism": ism, "reminder": 2},
-        )
+                pass
+        return await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=t_id)
 
-    except BadRequest as e:
-        if "message thread not found" in str(e).lower():
-            await db.reset_topic(uid)
-            await msg.reply_text(
-                "⚠️ Guruhdagi sizning kanalingiz (Topic) o'chirib tashlangan!\n"
-                "Profilingiz qayta tasdiqlash holatiga o'tkazildi, admin ruxsatini kuting."
+    if active:
+        # ── Mavjud guruhga qo'shish ──────────────────────────────
+        group_id, _ = active
+        task_id = await db.insert_xabar(uid, ism, filial, ctype, msg.message_id, group_id)
+        msg_count = await db.count_group_msgs(group_id)
+
+        try:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=topic_id,
+                text=f"➕ *{ism}* — {ctype} ({msg_count}-xabar, guruh #{group_id})",
+                parse_mode="Markdown",
+            )
+            fwd = await _forward_msg(topic_id)
+            await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
+            await msg.reply_text(f"✅ #{group_id}-guruhga qo'shildi ({msg_count}-xabar).")
+
+        except BadRequest as e:
+            if "message thread not found" in str(e).lower():
+                await db.reset_topic(uid)
+                await msg.reply_text(
+                    "⚠️ Guruhdagi kanalingiz o'chirilgan. Qayta tasdiqlash kutilmoqda."
+                )
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        f"🔄 *Mavzusi o'chirilgan xodim:*\n\n"
+                        f"👤 {ism} | {lavozim}"
+                    ),
+                    parse_mode="Markdown",
+                    reply_markup=tasdiq_inline(uid),
+                )
+            else:
+                logger.error(f"Guruhga qo'shishda xato (uid={uid}): {e}")
+                await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.")
+        except Exception as e:
+            logger.error(f"Guruhga qo'shishda xato (uid={uid}): {e}")
+            await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.")
+
+    else:
+        # ── Yangi guruh ochish ───────────────────────────────────
+        group_id = await db.create_xabar_guruhi(uid, ism, filial, topic_id)
+        task_id  = await db.insert_xabar(uid, ism, filial, ctype, msg.message_id, group_id)
+
+        try:
+            now_hm = datetime.now().strftime("%H:%M")
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=topic_id,
+                text=(
+                    f"📨 *Xodim:* {ism}  |  Guruh #{group_id}\n"
+                    f"🕒 *Vaqt:* {now_hm}  |  {ctype}"
+                ),
+                parse_mode="Markdown",
+            )
+            fwd = await _forward_msg(topic_id)
+            await db.update_xabar_group_fwd_id(task_id, fwd.message_id)
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=topic_id,
+                text=f"#{group_id}-guruh holati:",
+                reply_markup=group_sorov_inline(group_id),
             )
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=(
-                    f"🔄 *Mavzusi o'chirilgan xodim aniqlandi:*\n\n"
-                    f"👤 Xodim: {ism} | {lavozim}\n"
-                    f"Tizim uni avtomatik qayta tasdiqlash ro'yxatiga soldi."
+                    f"📬 *Yangi topshiriq!*\n"
+                    f"👤 Xodim: {ism}  |  🔢 #{group_id}"
                 ),
                 parse_mode="Markdown",
-                reply_markup=tasdiq_inline(uid),
+                reply_markup=group_sorov_inline(group_id),
             )
-        else:
-            logger.error(f"Xabar uzatishda xato (uid={uid}): {e}")
-            await msg.reply_text("❌ Xabar yuborishda xato yuz berdi. Iltimos qayta urinib ko'ring.")
-    except Exception as e:
-        logger.error(f"Xabar uzatishda xato (uid={uid}): {e}")
-        await msg.reply_text("❌ Xabar yuborishda xato yuz berdi. Iltimos qayta urinib ko'ring.")
+            await msg.reply_text(
+                f"✅ #{group_id}-sonli so'rovingiz qabul qilindi. Admin javobini kuting."
+            )
+            context.job_queue.run_once(
+                check_sla_timeout,
+                when=SLA_TIMEOUT_SEC,
+                data={"group_id": group_id, "x_ism": ism, "reminder": 1},
+            )
+            context.job_queue.run_once(
+                check_sla_timeout,
+                when=SLA_TIMEOUT_SEC * 2,
+                data={"group_id": group_id, "x_ism": ism, "reminder": 2},
+            )
+
+        except BadRequest as e:
+            if "message thread not found" in str(e).lower():
+                await db.reset_topic(uid)
+                await msg.reply_text(
+                    "⚠️ Guruhdagi kanalingiz o'chirilgan. Qayta tasdiqlash kutilmoqda."
+                )
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        f"🔄 *Mavzusi o'chirilgan xodim:*\n\n"
+                        f"👤 {ism} | {lavozim}"
+                    ),
+                    parse_mode="Markdown",
+                    reply_markup=tasdiq_inline(uid),
+                )
+            else:
+                logger.error(f"Yangi guruh ochishda xato (uid={uid}): {e}")
+                await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.")
+        except Exception as e:
+            logger.error(f"Yangi guruh ochishda xato (uid={uid}): {e}")
+            await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.")
 
 
 # ══════════════════════════════════════════════
@@ -485,7 +531,59 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Vazifa holati ─────────────────────────────────────────────
+    # ── Guruh holati ─────────────────────────────────────────────
+    if data.startswith(("grp_prog_", "grp_done_")):
+        parts    = data.split("_")
+        action   = parts[1]           # "prog" yoki "done"
+        group_id = int(parts[2])
+
+        group = await db.get_group_info(group_id)
+        if not group:
+            await query.edit_message_text("❌ Guruh topilmadi.")
+            return
+        user_id, ism, filial, g_topic_id, holat = group
+
+        if action == "prog":
+            if holat == "bajarildi":
+                await query.answer("Bu guruh allaqachon bajarilgan!", show_alert=True)
+                return
+            await db.update_group_holat(group_id, "jarayonda")
+            await query.edit_message_text(
+                f"🔄 #{group_id}-guruh jarayonga olindi.",
+                reply_markup=group_bajarildi_inline(group_id),
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🔄 #{group_id}-sonli so'rovingiz ko'rib chiqilmoqda.",
+                )
+            except Exception as e:
+                logger.warning(f"Guruh jarayon xabari yuborishda xato: {e}")
+
+        elif action == "done":
+            await db.update_group_holat(group_id, "bajarildi")
+
+            # Eng muhim xabarni topib reply qilamiz
+            main_msg = await db.get_most_important_msg(group_id)
+            await query.edit_message_text(f"✅ #{group_id}-guruh yakunlandi!")
+            try:
+                if main_msg:
+                    _, xabar_turi, msg_id = main_msg
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"✅ #{group_id}-sonli so'rovingiz bajarildi!",
+                        reply_parameters=ReplyParameters(message_id=msg_id),
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"✅ #{group_id}-sonli so'rovingiz bajarildi!",
+                    )
+            except Exception as e:
+                logger.warning(f"Guruh bajarildi xabari yuborishda xato: {e}")
+        return
+
+    # ── Vazifa holati (eski individual xabarlar uchun) ────────────
     if data.startswith(("prog_", "done_")):
         action, task_id = data.split("_", 1)[0], int(data.split("_", 1)[1])
         task = await db.get_xabar(task_id)

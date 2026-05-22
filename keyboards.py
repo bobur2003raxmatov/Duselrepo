@@ -100,6 +100,19 @@ def xodimlar_page_inline(page: int, total: int) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup([buttons])
 
 
+def group_sorov_inline(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔄 Jarayonda", callback_data=f"grp_prog_{group_id}"),
+        InlineKeyboardButton("✅ Bajarildi",  callback_data=f"grp_done_{group_id}"),
+    ]])
+
+
+def group_bajarildi_inline(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Bajarildi", callback_data=f"grp_done_{group_id}"),
+    ]])
+
+
 def sorov_inline(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🔄 Jarayonda", callback_data=f"prog_{task_id}"),
