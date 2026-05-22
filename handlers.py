@@ -14,6 +14,7 @@ from keyboards import (
     admin_kb, edit_field_kb, edit_select_kb, xodimlar_page_inline,
     sorov_inline, bajarildi_inline, tasdiq_inline, unblock_inline,
     group_sorov_inline, group_bajarildi_inline,
+    search_results_kb, xodim_profil_kb,
 )
 from utils import is_topic_valid, check_sla_timeout, generate_excel
 from config import (
@@ -668,6 +669,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != ADMIN_ID:
         return
 
+    if data.startswith("xodim_profil_"):
+        uid = int(data.split("_")[2])
+        row = await db.get_xodim_full(uid)
+        if not row:
+            await query.edit_message_text("❌ Xodim topilmadi.")
+            return
+        await query.edit_message_text(
+            _format_profil(row),
+            parse_mode="Markdown",
+            reply_markup=xodim_profil_kb(uid, row[9]),
+        )
+        return
+
     if data.startswith(("appr_", "reje_", "block_", "unbl_")):
         action, uid = data.split("_", 1)[0], int(data.split("_", 1)[1])
         await _cb_user_action(query, context, action, uid)
@@ -903,13 +917,29 @@ async def search_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "Qayta kiriting yoki /cancel:",
             parse_mode="Markdown",
         )
-        return SEARCH_QUERY  # Qayta kiritish imkoniyati
+        return SEARCH_QUERY
 
-    STATUS_EMOJI = {"approved": "✅", "pending": "⏳", "blocked": "🚫"}
-    matn = f"🔍 *'{em(query_text)}' bo'yicha natijalar ({len(rows)} ta):*\n\n"
-    for r in rows:
-        s = STATUS_EMOJI.get(r[5], "❓")
-        matn += f"{s} *{em(r[0])}* | {em(r[1])} | 🏢 {em(r[2])} | Kod: `{em(r[3])}` | ID: `{r[4]}`\n"
-
-    await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=admin_kb())
+    await update.message.reply_text(
+        f"🔍 *'{em(query_text)}' bo'yicha {len(rows)} ta natija:*\nXodimni tanlang:",
+        parse_mode="Markdown",
+        reply_markup=search_results_kb(rows),
+    )
     return ConversationHandler.END
+
+
+def _format_profil(row: tuple) -> str:
+    uid, ism, lavozim, kod, filial, tel1, tel2, tug_kun, topic_id, status, sana = row
+    STATUS_TEXT = {"approved": "✅ Tasdiqlangan", "pending": "⏳ Kutilmoqda", "blocked": "🚫 Bloklangan"}
+    sana_short = sana[:10] if sana else "—"
+    return (
+        f"👤 *{em(ism)}*\n\n"
+        f"💼 Lavozim: {em(lavozim)}\n"
+        f"🔑 Kod: `{em(kod)}`\n"
+        f"🏢 Filial: {em(filial)}\n"
+        f"📱 Tel 1: {em(tel1 or '—')}\n"
+        f"📱 Tel 2: {em(tel2 or '—')}\n"
+        f"🎂 Tug'ilgan kun: {em(tug_kun or '—')}\n"
+        f"📅 Ro'yxat: {em(sana_short)}\n"
+        f"🆔 ID: `{uid}`\n"
+        f"📊 Holat: {STATUS_TEXT.get(status, '❓')}"
+    )

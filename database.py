@@ -181,6 +181,17 @@ async def update_xodim_field(user_id: int, field: str, value: str):
         await db.commit()
 
 
+async def get_xodim_full(user_id: int) -> tuple | None:
+    """Barcha maydonlar: (user_id, ism, lavozim, kod, filial, tel1, tel2, tug_kun, topic_id, status, sana)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT user_id, ism, lavozim, kod, filial,
+                   telefon1, telefon2, tugilgan_kun, topic_id, status, sana
+            FROM xodimlar WHERE user_id=?
+        """, (user_id,)) as cur:
+            return await cur.fetchone()
+
+
 async def search_xodimlar(query: str) -> list:
     """Returns (ism, lavozim, filial, kod, user_id, status)"""
     async with aiosqlite.connect(DB_PATH) as db:

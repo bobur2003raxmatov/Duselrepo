@@ -57,7 +57,7 @@ def admin_kb() -> ReplyKeyboardMarkup:
         [
             ["📊 Statistika",              "👥 Xodimlar"],
             ["⏳ Kutilayotgan so'rovlar",  "🚫 Bloklanganlar"],
-            ["📝 Xodimni Tahrirlash",      "📥 Excel Eksport"],
+            ["📝 Xodimni Tahrirlash",      "📥 Excel"],
             ["🔍 Xodim Qidirish"],
         ],
         resize_keyboard=True,
@@ -161,6 +161,34 @@ def faq_javob_kb(faq_id: int, kategoriya_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton("⬅️ Savollar", callback_data=f"faq_kat_{kategoriya_id}"),
         InlineKeyboardButton("🏠 Bosh menyu", callback_data="faq_back"),
     ]])
+
+
+def search_results_kb(rows: list) -> InlineKeyboardMarkup:
+    """rows: [(ism, lavozim, filial, kod, user_id, status), ...]"""
+    STATUS_EMOJI = {"approved": "✅", "pending": "⏳", "blocked": "🚫"}
+    buttons = []
+    for r in rows:
+        s = STATUS_EMOJI.get(r[5], "❓")
+        buttons.append([InlineKeyboardButton(
+            f"{s} {r[0]} — {r[1]} | {r[2]}",
+            callback_data=f"xodim_profil_{r[4]}",
+        )])
+    return InlineKeyboardMarkup(buttons)
+
+
+def xodim_profil_kb(user_id: int, status: str) -> InlineKeyboardMarkup:
+    buttons = []
+    if status == "pending":
+        buttons.append([
+            InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"appr_{user_id}"),
+            InlineKeyboardButton("❌ Rad etish",  callback_data=f"reje_{user_id}"),
+        ])
+        buttons.append([InlineKeyboardButton("🚫 Bloklash", callback_data=f"block_{user_id}")])
+    elif status == "approved":
+        buttons.append([InlineKeyboardButton("🚫 Bloklash", callback_data=f"block_{user_id}")])
+    elif status == "blocked":
+        buttons.append([InlineKeyboardButton("🔓 Blokdan ochish", callback_data=f"unbl_{user_id}")])
+    return InlineKeyboardMarkup(buttons)
 
 
 def unblock_inline(user_id: int) -> InlineKeyboardMarkup:
