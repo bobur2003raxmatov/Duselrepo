@@ -47,7 +47,10 @@ def remove_kb() -> ReplyKeyboardRemove:
 
 def xodim_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["❓ Ko'p So'raladigan Savollar"]],
+        [
+            ["🏪 Yangi Klient"],
+            ["❓ Ko'p So'raladigan Savollar"],
+        ],
         resize_keyboard=True,
     )
 
