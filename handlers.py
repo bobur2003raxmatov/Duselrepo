@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from functools import wraps
 
-from telegram import Update, BotCommand, ReplyParameters
+from telegram import Update, BotCommand, ReplyParameters, ReplyKeyboardMarkup, KeyboardButton
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.helpers import escape_markdown
@@ -19,6 +19,9 @@ from keyboards import (
     biriktirish_agents_kb, biriktirish_checkers_kb, checker_sorov_kb,
     urgency_kb, stars_kb, filial_filter_kb,
     pending_xodimlar_inline, blocked_xodimlar_inline,
+    klient_kategoriya_kb, klient_dokon_turi_kb, klient_vizit_kun_kb,
+    klient_chastota_kb, klient_distributor_kb, klient_agent_kb,
+    klient_brendlar_kb, klient_brendlar_kb_selected, klient_confirm_kb,
 )
 from utils import (
     is_topic_valid, check_sla_timeout, generate_excel,
@@ -32,6 +35,12 @@ from config import (
     EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
     BIRIKTIR_EDIT_FIELD, BIRIKTIR_EDIT_VALUE,
+    DOKON_TURLARI, BRENDLAR_LIST, VIZIT_KUNLARI, CHASTOTA_LIST,
+    KLIENT_RASM, KLIENT_FIRMA_NOMI, KLIENT_TELEFON1, KLIENT_TELEFON2,
+    KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
+    KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
+    KLIENT_VIZIT_KUN, KLIENT_CHASTOTA, KLIENT_LIMIT, KLIENT_BRENDLAR,
+    KLIENT_CONFIRM,
 )
 
 logger = logging.getLogger(__name__)
@@ -1585,3 +1594,447 @@ async def admin_agent_reyting(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"  |  Bu hafta: {haftalik_str}\n\n"
             )
     await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=admin_kb())
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# KLIENT REGISTRATSIYA OQIMI (16 QADAM)
+# ══════════════════════════════════════════════════════════════════════════════════════
+async def start_klient_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Klient registratsiyani boshlash - 1-qadam: rasm."""
+    uid = update.effective_user.id
+    user = await db.get_xodim(uid)
+
+    if not user or user[3] != "Supervisor":
+        await update.message.reply_text("❌ Faqat Supervisorlar klientlar qo'sha oladi.")
+        return ConversationHandler.END
+
+    context.user_data["klient_supervisor_id"] = uid
+    context.user_data["klient_data"] = {}
+
+    await update.message.reply_text(
+        "📷 *Do'kon rasmi* (majburiy)\n\n"
+        "_Iltimos, do'konning rasmi yuboring:_",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return KLIENT_RASM
+
+
+async def klient_rasm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """2-qadam: rasm qabul qilish."""
+    if not update.message.photo:
+        await update.message.reply_text("❌ Iltimos, rasm yuboring.")
+        return KLIENT_RASM
+
+    photo_file_id = update.message.photo[-1].file_id
+    context.user_data["klient_data"]["rasm_file_id"] = photo_file_id
+
+    await update.message.reply_text(
+        "📝 *Firma nomi yoki Do'konchi ismi* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return KLIENT_FIRMA_NOMI
+
+
+async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """3-qadam: firma nomi."""
+    firma_nomi = update.message.text.strip()
+    if len(firma_nomi) < 2:
+        await update.message.reply_text("❌ Firma nomi kamida 2 ta harf bo'lishi kerak.")
+        return KLIENT_FIRMA_NOMI
+
+    context.user_data["klient_data"]["firma_nomi"] = firma_nomi
+
+    await update.message.reply_text(
+        "📱 *1-Telefon raqami* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=telefon_kb(),
+    )
+    return KLIENT_TELEFON1
+
+
+async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """4-qadam: telefon 1."""
+    if not update.message.contact:
+        await update.message.reply_text(
+            "❌ Iltimos, raqam yuborish tugmasini bosing.",
+            reply_markup=telefon_kb(),
+        )
+        return KLIENT_TELEFON1
+
+    context.user_data["klient_data"]["telefon1"] = update.message.contact.phone_number
+
+    await update.message.reply_text(
+        "📱 *2-Telefon raqami* (ixtiyoriy)",
+        parse_mode="Markdown",
+        reply_markup=telefon2_kb(),
+    )
+    return KLIENT_TELEFON2
+
+
+async def klient_telefon2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """5-qadam: telefon 2 (ixtiyoriy)."""
+    if update.message.contact:
+        context.user_data["klient_data"]["telefon2"] = update.message.contact.phone_number
+    elif update.message.text == "⏭ O'tkazib yuborish":
+        context.user_data["klient_data"]["telefon2"] = None
+    else:
+        await update.message.reply_text(
+            "❌ Iltimos, raqam yuboring yoki o'tkazib yuborish tugmasini bosing.",
+            reply_markup=telefon2_kb(),
+        )
+        return KLIENT_TELEFON2
+
+    await update.message.reply_text(
+        "🔢 *INN raqami* (majburiy)\n"
+        "_Masalan: 123456789_",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return KLIENT_INN
+
+
+async def klient_inn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """6-qadam: INN."""
+    inn = update.message.text.strip()
+    if not inn.isdigit() or len(inn) < 9:
+        await update.message.reply_text("❌ INN raqami 9 ta raqamdan iborat bo'lishi kerak.")
+        return KLIENT_INN
+
+    existing = await db.search_klientlar(inn)
+    if existing:
+        await update.message.reply_text("❌ Bu INN allaqachon ro'yxatda bor.")
+        return KLIENT_INN
+
+    context.user_data["klient_data"]["inn"] = inn
+
+    await update.message.reply_text(
+        "📍 *Orienter* (yaqin joy tavsifi)\n"
+        "_Masalan: Bazarning yonida, Mektebning oldida_",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return KLIENT_ORIENTER
+
+
+async def klient_orienter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """7-qadam: orienter."""
+    orienter = update.message.text.strip()
+    if len(orienter) < 3:
+        await update.message.reply_text("❌ Orienter kamida 3 ta harf bo'lishi kerak.")
+        return KLIENT_ORIENTER
+
+    context.user_data["klient_data"]["orienter"] = orienter
+
+    await update.message.reply_text(
+        "📍 *Lokatsiya* (majburiy)\n\n"
+        "_Iltimos, do'kon joylashuvini yuboring:_",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(
+            [[KeyboardButton("📍 Lokatsiyani yuborish", request_location=True)]],
+            resize_keyboard=True, one_time_keyboard=True,
+        ),
+    )
+    return KLIENT_LOKATSIYA
+
+
+async def klient_lokatsiya(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """8-qadam: lokatsiya."""
+    if not update.message.location:
+        await update.message.reply_text("❌ Iltimos, lokatsiyani yuborish tugmasini bosing.")
+        return KLIENT_LOKATSIYA
+
+    context.user_data["klient_data"]["lokatsiya_lat"] = update.message.location.latitude
+    context.user_data["klient_data"]["lokatsiya_lon"] = update.message.location.longitude
+
+    await update.message.reply_text(
+        "🏪 *Kategoriya* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=klient_kategoriya_kb(),
+    )
+    return KLIENT_KATEGORIYA
+
+
+async def klient_kategoriya(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """9-qadam: kategoriya (inline)."""
+    query = update.callback_query
+    await query.answer()
+
+    idx = safe_callback_int(query.data, "_", 2)
+    if idx is None or idx >= len(DOKON_TURLARI):
+        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+        return KLIENT_KATEGORIYA
+
+    context.user_data["klient_data"]["kategoriya"] = DOKON_TURLARI[idx]
+
+    await query.edit_message_text(
+        "🏢 *Do'kon turi* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=klient_dokon_turi_kb(),
+    )
+    return KLIENT_DOKON_TURI
+
+
+async def klient_dokon_turi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """10-qadam: do'kon turi (inline)."""
+    query = update.callback_query
+    await query.answer()
+
+    idx = safe_callback_int(query.data, "_", 2)
+    if idx is None or idx >= len(DOKON_TURLARI):
+        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+        return KLIENT_DOKON_TURI
+
+    context.user_data["klient_data"]["dokon_turi"] = DOKON_TURLARI[idx]
+
+    distributors = await db.get_available_checkers()
+    if not distributors:
+        await query.edit_message_text("❌ Tizimda distributor yo'q.")
+        return ConversationHandler.END
+
+    await query.edit_message_text(
+        "🚚 *Distributor* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=klient_distributor_kb(distributors),
+    )
+    return KLIENT_DISTRIBUTOR
+
+
+async def klient_distributor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """11-qadam: distributor."""
+    query = update.callback_query
+    await query.answer()
+
+    dist_id = safe_callback_int(query.data, "_", 2)
+    if dist_id is None:
+        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+        return KLIENT_DISTRIBUTOR
+
+    dist = await db.get_xodim(dist_id)
+    if not dist:
+        await query.answer("❌ Distributor topilmadi.", show_alert=True)
+        return KLIENT_DISTRIBUTOR
+
+    context.user_data["klient_data"]["distributor"] = dist[2]  # ism
+    context.user_data["klient_data"]["distributor_id"] = dist_id
+
+    agents = await db.get_agents()
+    if not agents:
+        await query.edit_message_text("❌ Tizimda agent yo'q.")
+        return ConversationHandler.END
+
+    await query.edit_message_text(
+        "👤 *Agent kodi* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=klient_agent_kb(agents),
+    )
+    return KLIENT_AGENT_KOD
+
+
+async def klient_agent_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """12-qadam: agent kod."""
+    query = update.callback_query
+    await query.answer()
+
+    agent_id = safe_callback_int(query.data, "_", 2)
+    if agent_id is None:
+        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+        return KLIENT_AGENT_KOD
+
+    agent = await db.get_xodim(agent_id)
+    if not agent:
+        await query.answer("❌ Agent topilmadi.", show_alert=True)
+        return KLIENT_AGENT_KOD
+
+    context.user_data["klient_data"]["agent_kod"] = agent[4]  # kod
+
+    await query.edit_message_text(
+        "📅 *Vizit kuni* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=klient_vizit_kun_kb(),
+    )
+    return KLIENT_VIZIT_KUN
+
+
+async def klient_vizit_kun(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """13-qadam: vizit kuni."""
+    query = update.callback_query
+    await query.answer()
+
+    idx = safe_callback_int(query.data, "_", 2)
+    if idx is None or idx >= len(VIZIT_KUNLARI):
+        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+        return KLIENT_VIZIT_KUN
+
+    context.user_data["klient_data"]["vizit_kun"] = VIZIT_KUNLARI[idx]
+
+    await query.edit_message_text(
+        "🔄 *Chastota* (majburiy)",
+        parse_mode="Markdown",
+        reply_markup=klient_chastota_kb(),
+    )
+    return KLIENT_CHASTOTA
+
+
+async def klient_chastota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """14-qadam: chastota."""
+    query = update.callback_query
+    await query.answer()
+
+    idx = safe_callback_int(query.data, "_", 2)
+    if idx is None or idx >= len(CHASTOTA_LIST):
+        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+        return KLIENT_CHASTOTA
+
+    context.user_data["klient_data"]["chastota"] = CHASTOTA_LIST[idx]
+
+    await query.edit_message_text(
+        "💰 *Limit summa* (majburiy)\n"
+        "_Masalan: 500000_",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return KLIENT_LIMIT
+
+
+async def klient_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """15-qadam: limit."""
+    try:
+        limit = float(update.message.text.strip())
+        if limit <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Iltimos, to'g'ri raqam kiriting.")
+        return KLIENT_LIMIT
+
+    context.user_data["klient_data"]["limit_summa"] = limit
+    context.user_data["klient_data"]["selected_brands"] = []
+
+    await update.message.reply_text(
+        "🏷️ *Brendlar* (majburiy - bir nechta tanlash mumkin)\n\n"
+        "_Bosing ☑️ aytilgan brendlarni tanlang:_",
+        parse_mode="Markdown",
+        reply_markup=klient_brendlar_kb(),
+    )
+    return KLIENT_BRENDLAR
+
+
+async def klient_brendlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """16-qadam: brendlar (multi-select)."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    selected = context.user_data.get("klient_data", {}).get("selected_brands", [])
+
+    if data == "klient_brands_confirm":
+        if not selected:
+            await query.answer("❌ Kamida bir brendni tanlang.", show_alert=True)
+            return KLIENT_BRENDLAR
+        context.user_data["klient_data"]["brendlar"] = ",".join([BRENDLAR_LIST[i] for i in selected])
+        await _show_klient_summary(query.edit_message_text, context.user_data["klient_data"])
+        return KLIENT_CONFIRM
+
+    elif data == "klient_cancel":
+        await query.edit_message_text("❌ Qayta boshlaylik. Ismingizni kiriting:", reply_markup=remove_kb())
+        return ConversationHandler.END
+
+    else:
+        idx = safe_callback_int(data, "_", 2)
+        if idx is None or idx >= len(BRENDLAR_LIST):
+            return KLIENT_BRENDLAR
+
+        if idx in selected:
+            selected.remove(idx)
+        else:
+            selected.append(idx)
+
+        context.user_data["klient_data"]["selected_brands"] = selected
+        await query.edit_message_text(
+            "🏷️ *Brendlar* (majburiy - bir nechta tanlash mumkin)",
+            parse_mode="Markdown",
+            reply_markup=klient_brendlar_kb_selected(selected),
+        )
+        return KLIENT_BRENDLAR
+
+
+async def _show_klient_summary(send_fn, data: dict):
+    """Klient ma'lumotlarining xulasasini ko'rsatish."""
+    summary = (
+        f"✅ *Klient Xulasasi*\n\n"
+        f"📝 Firma: {em(data['firma_nomi'])}\n"
+        f"📱 Tel 1: {em(data['telefon1'])}\n"
+        f"📱 Tel 2: {em(data.get('telefon2') or '—')}\n"
+        f"🔢 INN: {em(data['inn'])}\n"
+        f"📍 Orienter: {em(data['orienter'])}\n"
+        f"🏪 Kategoriya: {em(data['kategoriya'])}\n"
+        f"🏢 Do'kon turi: {em(data['dokon_turi'])}\n"
+        f"🚚 Distributor: {em(data['distributor'])}\n"
+        f"👤 Agent kodi: {em(data['agent_kod'])}\n"
+        f"📅 Vizit kuni: {em(data['vizit_kun'])}\n"
+        f"🔄 Chastota: {em(data['chastota'])}\n"
+        f"💰 Limit: {em(str(data['limit_summa']))}\n"
+        f"🏷️ Brendlar: {em(data['brendlar'])}\n"
+    )
+    await send_fn(summary, parse_mode="Markdown", reply_markup=klient_confirm_kb())
+
+
+async def klient_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """16-qadam: tasdiqlash."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "klient_submit":
+        data = context.user_data.get("klient_data", {})
+        supervisor_id = context.user_data.get("klient_supervisor_id")
+
+        try:
+            klient_id = await db.insert_klient(
+                rasm_file_id=data.get("rasm_file_id"),
+                firma_nomi=data.get("firma_nomi"),
+                telefon1=data.get("telefon1"),
+                telefon2=data.get("telefon2"),
+                inn=data.get("inn"),
+                orienter=data.get("orienter"),
+                lokatsiya_lat=data.get("lokatsiya_lat"),
+                lokatsiya_lon=data.get("lokatsiya_lon"),
+                kategoriya=data.get("kategoriya"),
+                dokon_turi=data.get("dokon_turi"),
+                distributor=data.get("distributor"),
+                agent_kod=data.get("agent_kod"),
+                vizit_kun=data.get("vizit_kun"),
+                chastota=data.get("chastota"),
+                limit_summa=data.get("limit_summa"),
+                brendlar=data.get("brendlar"),
+                supervisor_id=supervisor_id,
+            )
+
+            await query.edit_message_text("✅ Klient muvaffaqiyatli qo'shildi!")
+
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        f"📬 *Yangi klient!* #{klient_id}\n\n"
+                        f"📝 Firma: {em(data['firma_nomi'])}\n"
+                        f"🔢 INN: {em(data['inn'])}\n"
+                        f"🚚 Distributor: {em(data['distributor'])}\n"
+                        f"👤 Supervisor: {em((await db.get_xodim(supervisor_id))[2])}"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.warning(f"Admin xabari yuborishda xato: {e}")
+
+            context.user_data.clear()
+        except Exception as e:
+            logger.error(f"Klient qo'shishda xato: {e}")
+            await query.edit_message_text(f"❌ Xato: {e}")
+
+        return ConversationHandler.END
+
+    elif query.data == "klient_cancel":
+        context.user_data.clear()
+        await query.edit_message_text("❌ Qayta boshlaylik. Ismingizni kiriting:")
+        return ConversationHandler.END

@@ -133,6 +133,34 @@ async def init_db():
         """)
         await db.commit()
 
+        # Klientlar jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS klientlar (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                rasm_file_id   TEXT,
+                firma_nomi     TEXT NOT NULL,
+                telefon1       TEXT NOT NULL,
+                telefon2       TEXT,
+                inn            TEXT NOT NULL UNIQUE,
+                orienter       TEXT NOT NULL,
+                lokatsiya_lat  REAL,
+                lokatsiya_lon  REAL,
+                kategoriya     TEXT NOT NULL,
+                dokon_turi     TEXT NOT NULL,
+                distributor    TEXT NOT NULL,
+                agent_kod      TEXT NOT NULL,
+                vizit_kun      TEXT NOT NULL,
+                chastota       TEXT NOT NULL,
+                limit_summa    REAL NOT NULL,
+                brendlar       TEXT,
+                status         TEXT DEFAULT 'pending',
+                reject_reason  TEXT,
+                sana           TEXT,
+                supervisor_id  INTEGER NOT NULL
+            )
+        """)
+        await db.commit()
+
 
 # ── Xodim ────────────────────────────────────────────────────────
 async def get_xodim(user_id: int) -> tuple | None:
@@ -835,4 +863,98 @@ async def get_all_biriktirish_detailed() -> list:
             LEFT JOIN xodimlar c ON c.user_id = b.checker_id
             ORDER BY a.ism
         """) as cur:
+            return await cur.fetchall()
+
+
+# ── Klientlar (Clients) ──────────────────────────────────────────
+async def insert_klient(rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
+                       lokatsiya_lat, lokatsiya_lon, kategoriya, dokon_turi, distributor,
+                       agent_kod, vizit_kun, chastota, limit_summa, brendlar, supervisor_id) -> int:
+    """Yangi klientni qo'shadi."""
+    sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            INSERT INTO klientlar (rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
+                                  lokatsiya_lat, lokatsiya_lon, kategoriya, dokon_turi,
+                                  distributor, agent_kod, vizit_kun, chastota, limit_summa,
+                                  brendlar, status, sana, supervisor_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        """, (rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
+              lokatsiya_lat, lokatsiya_lon, kategoriya, dokon_turi,
+              distributor, agent_kod, vizit_kun, chastota, limit_summa,
+              brendlar, sana, supervisor_id))
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_klient(klient_id: int) -> tuple | None:
+    """Full klient info."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM klientlar WHERE id=?", (klient_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def get_klientlar_by_supervisor(supervisor_id: int) -> list:
+    """Supervisorning barcha klientlari."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM klientlar WHERE supervisor_id=? ORDER BY sana DESC",
+            (supervisor_id,)
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_all_klientlar(status: str | None = None) -> list:
+    """Barcha klientlar (admin uchun)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        if status:
+            async with db.execute(
+                "SELECT * FROM klientlar WHERE status=? ORDER BY sana DESC", (status,)
+            ) as cur:
+                return await cur.fetchall()
+        else:
+            async with db.execute(
+                "SELECT * FROM klientlar ORDER BY sana DESC"
+            ) as cur:
+                return await cur.fetchall()
+
+
+async def approve_klient(klient_id: int):
+    """Klientni tasdiqlash."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE klientlar SET status='approved' WHERE id=?", (klient_id,)
+        )
+        await db.commit()
+
+
+async def reject_klient(klient_id: int, reason: str):
+    """Klientni rad etish."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE klientlar SET status='rejected', reject_reason=? WHERE id=?",
+            (reason, klient_id)
+        )
+        await db.commit()
+
+
+async def search_klientlar(query: str) -> list:
+    """Klientlarni qidirish (firma_nomi, inn, distributor bo'yicha)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT * FROM klientlar
+            WHERE firma_nomi LIKE ? OR inn LIKE ? OR distributor LIKE ?
+            ORDER BY sana DESC
+        """, (f"%{query}%", f"%{query}%", f"%{query}%")) as cur:
+            return await cur.fetchall()
+
+
+async def get_all_klientlar_for_excel() -> list:
+    """Excel export uchun barcha klientlar."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM klientlar WHERE status='approved' ORDER BY firma_nomi"
+        ) as cur:
             return await cur.fetchall()

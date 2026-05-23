@@ -359,3 +359,69 @@ def unblock_inline(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🔓 Blokdan ochish", callback_data=f"unbl_{user_id}"),
     ]])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════
+# KLIENT REGISTRATSIYA KLAVIATURALARI
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+def klient_kategoriya_kb() -> InlineKeyboardMarkup:
+    from config import DOKON_TURLARI
+    buttons = [[InlineKeyboardButton(cat, callback_data=f"klient_kat_{i}")] for i, cat in enumerate(DOKON_TURLARI)]
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_dokon_turi_kb() -> InlineKeyboardMarkup:
+    from config import DOKON_TURLARI
+    buttons = [[InlineKeyboardButton(tur, callback_data=f"klient_tur_{i}")] for i, tur in enumerate(DOKON_TURLARI)]
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_vizit_kun_kb() -> InlineKeyboardMarkup:
+    from config import VIZIT_KUNLARI
+    buttons = [[InlineKeyboardButton(kun, callback_data=f"klient_kun_{i}")] for i, kun in enumerate(VIZIT_KUNLARI)]
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_chastota_kb() -> InlineKeyboardMarkup:
+    from config import CHASTOTA_LIST
+    buttons = [[InlineKeyboardButton(ch, callback_data=f"klient_chas_{i}")] for i, ch in enumerate(CHASTOTA_LIST)]
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_distributor_kb(distributors: list) -> InlineKeyboardMarkup:
+    buttons = [[InlineKeyboardButton(d[1], callback_data=f"klient_dist_{d[0]}")] for d in distributors]
+    buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="klient_cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_agent_kb(agents: list) -> InlineKeyboardMarkup:
+    buttons = [[InlineKeyboardButton(f"{a[0]} ({a[3]})", callback_data=f"klient_agent_{a[4]}")] for a in agents]
+    buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="klient_cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_brendlar_kb() -> InlineKeyboardMarkup:
+    from config import BRENDLAR_LIST
+    buttons = [[InlineKeyboardButton(f"☐ {b}", callback_data=f"klient_brand_{i}")] for i, b in enumerate(BRENDLAR_LIST)]
+    buttons.append([InlineKeyboardButton("✅ Tasdiqla", callback_data="klient_brands_confirm")])
+    buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="klient_cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_brendlar_kb_selected(selected: list) -> InlineKeyboardMarkup:
+    from config import BRENDLAR_LIST
+    buttons = []
+    for i, b in enumerate(BRENDLAR_LIST):
+        icon = "☑️" if i in selected else "☐"
+        buttons.append([InlineKeyboardButton(f"{icon} {b}", callback_data=f"klient_brand_{i}")])
+    buttons.append([InlineKeyboardButton("✅ Tasdiqla", callback_data="klient_brands_confirm")])
+    buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="klient_cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Tasdiqlash", callback_data="klient_submit")],
+        [InlineKeyboardButton("✏️ Qayta toldirish", callback_data="klient_cancel")],
+    ])
