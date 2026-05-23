@@ -1627,7 +1627,7 @@ async def admin_agent_reyting(update: Update, context: ContextTypes.DEFAULT_TYPE
 # KLIENT REGISTRATSIYA OQIMI (16 QADAM)
 # ══════════════════════════════════════════════════════════════════════════════════════
 async def new_client_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show client registration template and start the conversation."""
+    """Show client registration template and initialize conversation."""
     uid = update.effective_user.id
     user = await db.get_xodim(uid)
 
@@ -1635,29 +1635,39 @@ async def new_client_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Faqat Agent bo'lmagan xodimlar klientlar qo'sha oladi.")
         return ConversationHandler.END
 
+    context.user_data["klient_supervisor_id"] = uid
+    context.user_data["klient_data"] = {}
+
     template = (
         "📋 *Yangi Klient Shablon:*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "📸 Rasm: (do'kon rasmi)\n"
-        "🏢 Firma nomi: \n"
-        "📱 Telefon 1: \n"
-        "📱 Telefon 2: \n"
-        "🔢 INN: \n"
-        "📍 Orienter: \n"
-        "📌 Lokatsiya: \n"
-        "🗂 Kategoriya: \n"
-        "🏪 Do'kon turi: \n"
-        "👤 Distributor: \n"
-        "👨 Agent kodi: \n"
-        "📅 Vizit kuni: \n"
-        "🔄 Chastota: \n"
-        "💰 Limit: \n"
-        "🏷 Brendlar: \n"
+        "🏢 Firma nomi: Bobur Savdo\n"
+        "📱 Telefon 1: +998901234567\n"
+        "📱 Telefon 2: +998901234568\n"
+        "🔢 INN: 123456789\n"
+        "📍 Orienter: Chilonzor bozori yaqin\n"
+        "📌 Lokatsiya: (GPS koordinatalari)\n"
+        "🗂 Kategoriya: Supermarket\n"
+        "🏪 Do'kon turi: Chakana\n"
+        "👤 Distributor: Sardor\n"
+        "👨 Agent kodi: AN001\n"
+        "📅 Vizit kuni: Dushanba\n"
+        "🔄 Chastota: 1x1\n"
+        "💰 Limit: 5000000\n"
+        "🏷 Brendlar: Dusel, Verla\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "_Registratsiyani boshlash uchun, do'kon rasmi yuboring._"
     )
-    await update.message.reply_text(template, parse_mode="Markdown")
-    return await start_klient_registration(update, context)
+    await update.message.reply_text(template, parse_mode="Markdown", reply_markup=remove_kb())
+
+    await update.message.reply_text(
+        "📷 *Do'kon rasmi* (majburiy)\n\n"
+        "_Iltimos, do'konning rasmi yuboring:_",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return KLIENT_RASM
 
 
 async def start_klient_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1691,7 +1701,8 @@ async def klient_rasm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["klient_data"]["rasm_file_id"] = photo_file_id
 
     await update.message.reply_text(
-        "📝 *Firma nomi yoki Do'konchi ismi* (majburiy)",
+        "📝 *Firma nomi yoki Do'konchi ismi* (majburiy)\n\n"
+        "_Masalan: Bobur Savdo, Xasan Dukoni, ABC Kompaniyasi_",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
@@ -1708,7 +1719,8 @@ async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["klient_data"]["firma_nomi"] = firma_nomi
 
     await update.message.reply_text(
-        "📱 *1-Telefon raqami* (majburiy)",
+        "📱 *1-Telefon raqami* (majburiy)\n\n"
+        "_Masalan: +998901234567_",
         parse_mode="Markdown",
         reply_markup=telefon_kb(),
     )
@@ -1727,7 +1739,8 @@ async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["klient_data"]["telefon1"] = update.message.contact.phone_number
 
     await update.message.reply_text(
-        "📱 *2-Telefon raqami* (ixtiyoriy)",
+        "📱 *2-Telefon raqami* (ixtiyoriy)\n\n"
+        "_Masalan: +998901234568 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
         parse_mode="Markdown",
         reply_markup=telefon2_kb(),
     )
@@ -1951,8 +1964,8 @@ async def klient_chastota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["klient_data"]["chastota"] = CHASTOTA_LIST[idx]
 
     await query.edit_message_text(
-        "💰 *Limit summa* (majburiy)\n"
-        "_Masalan: 500000_",
+        "💰 *Limit summa* (majburiy)\n\n"
+        "_Masalan: 5000000 (5 million so'mda)_",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
@@ -2023,20 +2036,24 @@ async def klient_brendlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _show_klient_summary(send_fn, data: dict):
     """Klient ma'lumotlarining xulasasini ko'rsatish."""
     summary = (
-        f"✅ *Klient Xulasasi*\n\n"
-        f"📝 Firma: {em(data['firma_nomi'])}\n"
+        f"📋 *Klient ma'lumotlari:*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📸 Rasm: ✅\n"
+        f"🏢 Firma: {em(data['firma_nomi'])}\n"
         f"📱 Tel 1: {em(data['telefon1'])}\n"
         f"📱 Tel 2: {em(data.get('telefon2') or '—')}\n"
         f"🔢 INN: {em(data['inn'])}\n"
         f"📍 Orienter: {em(data['orienter'])}\n"
-        f"🏪 Kategoriya: {em(data['kategoriya'])}\n"
-        f"🏢 Do'kon turi: {em(data['dokon_turi'])}\n"
-        f"🚚 Distributor: {em(data['distributor'])}\n"
-        f"👤 Agent kodi: {em(data['agent_kod'])}\n"
-        f"📅 Vizit kuni: {em(data['vizit_kun'])}\n"
+        f"📌 Lokatsiya: ✅\n"
+        f"🗂 Kategoriya: {em(data['kategoriya'])}\n"
+        f"🏪 Do'kon turi: {em(data['dokon_turi'])}\n"
+        f"👤 Distributor: {em(data['distributor'])}\n"
+        f"👨 Agent: {em(data['agent_kod'])}\n"
+        f"📅 Vizit: {em(data['vizit_kun'])}\n"
         f"🔄 Chastota: {em(data['chastota'])}\n"
-        f"💰 Limit: {em(str(data['limit_summa']))}\n"
-        f"🏷️ Brendlar: {em(data['brendlar'])}\n"
+        f"💰 Limit: {em(str(int(data['limit_summa'])))}\n"
+        f"🏷 Brendlar: {em(data['brendlar'])}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     await send_fn(summary, parse_mode="Markdown", reply_markup=klient_confirm_kb())
 
@@ -2074,17 +2091,42 @@ async def klient_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("✅ Klient muvaffaqiyatli qo'shildi!")
 
             try:
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=(
-                        f"📬 *Yangi klient!* #{klient_id}\n\n"
-                        f"📝 Firma: {em(data['firma_nomi'])}\n"
-                        f"🔢 INN: {em(data['inn'])}\n"
-                        f"🚚 Distributor: {em(data['distributor'])}\n"
-                        f"👤 Supervisor: {em((await db.get_xodim(supervisor_id))[2])}"
-                    ),
-                    parse_mode="Markdown",
+                supervisor = await db.get_xodim(supervisor_id)
+                supervisor_name = supervisor[2] if supervisor else "Unknown"
+
+                admin_card = (
+                    f"📋 *Yangi Klient #{klient_id}*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🏢 Firma: {em(data['firma_nomi'])}\n"
+                    f"📱 Tel 1: {em(data['telefon1'])}\n"
+                    f"📱 Tel 2: {em(data.get('telefon2') or '—')}\n"
+                    f"🔢 INN: {em(data['inn'])}\n"
+                    f"📍 Orienter: {em(data['orienter'])}\n"
+                    f"🗂 Kategoriya: {em(data['kategoriya'])}\n"
+                    f"🏪 Do'kon turi: {em(data['dokon_turi'])}\n"
+                    f"👤 Distributor: {em(data['distributor'])}\n"
+                    f"👨 Agent: {em(data['agent_kod'])}\n"
+                    f"📅 Vizit: {em(data['vizit_kun'])}\n"
+                    f"🔄 Chastota: {em(data['chastota'])}\n"
+                    f"💰 Limit: {em(str(int(data['limit_summa'])))}\n"
+                    f"🏷 Brendlar: {em(data['brendlar'])}\n"
+                    f"👤 Supervisor: {em(supervisor_name)}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 )
+
+                if data.get("rasm_file_id"):
+                    await context.bot.send_photo(
+                        chat_id=ADMIN_ID,
+                        photo=data["rasm_file_id"],
+                        caption=admin_card,
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=admin_card,
+                        parse_mode="Markdown",
+                    )
             except Exception as e:
                 logger.warning(f"Admin xabari yuborishda xato: {e}")
 

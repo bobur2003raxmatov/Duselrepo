@@ -35,7 +35,8 @@
       "Bash(python3 -m py_compile bot.py)",
       "Bash(pkill -f \"python.*bot\")",
       "Bash(pkill -9 -f \"python.*bot\")",
-      "Bash(TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\" python3 bot.py)"
+      "Bash(TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\" python3 bot.py)",
+      "Bash(TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\" nohup python3 *)"
     ]
   }
 }
