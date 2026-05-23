@@ -1624,8 +1624,8 @@ async def start_klient_registration(update: Update, context: ContextTypes.DEFAUL
     uid = update.effective_user.id
     user = await db.get_xodim(uid)
 
-    if not user or user[3] not in ("Supervisor", "Filial Rahbari"):
-        await update.message.reply_text("❌ Faqat Supervisor va Filial Rahbarlari klientlar qo'sha oladi.")
+    if not user or user[3] == "Agent":
+        await update.message.reply_text("❌ Faqat Agent bo'lmagan xodimlar klientlar qo'sha oladi.")
         return ConversationHandler.END
 
     context.user_data["klient_supervisor_id"] = uid
@@ -2176,6 +2176,9 @@ async def klient_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Klientni rad etish."""
+    if update.effective_user.id != ADMIN_ID:
+        return  # Only admins can reject clients
+
     klient_id = context.user_data.get("klient_reject_id")
 
     if not klient_id:

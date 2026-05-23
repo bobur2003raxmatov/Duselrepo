@@ -26,7 +26,12 @@
       "Bash(kill %1)",
       "Bash(wait)",
       "Bash(python3 bot.py)",
-      "Bash(python3 -m py_compile bot.py handlers.py keyboards.py database.py config.py utils.py)"
+      "Bash(python3 -m py_compile bot.py handlers.py keyboards.py database.py config.py utils.py)",
+      "Bash(pkill -f \"python3 bot.py\")",
+      "Bash(pkill -9 -f \"python3 bot.py\")",
+      "Bash(python3 -m py_compile keyboards.py bot.py)",
+      "Bash(python3 -m py_compile handlers.py)",
+      "Bash(python3 -m py_compile handlers.py database.py keyboards.py config.py utils.py bot.py)"
     ]
   }
 }
