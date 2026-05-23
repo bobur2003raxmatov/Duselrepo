@@ -24,19 +24,13 @@ def filial_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
-def telefon_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton("📱 Raqamni ulashish", request_contact=True)]],
-        resize_keyboard=True, one_time_keyboard=True,
-    )
+def telefon_kb() -> ReplyKeyboardRemove:
+    return ReplyKeyboardRemove()
 
 
 def telefon2_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("📱 2-raqamni ulashish", request_contact=True)],
-            ["⏭ O'tkazib yuborish"],
-        ],
+        [["⏭ O'tkazib yuborish"]],
         resize_keyboard=True, one_time_keyboard=True,
     )
 

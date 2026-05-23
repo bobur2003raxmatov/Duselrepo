@@ -163,14 +163,8 @@ def build_application() -> Application:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, klient_rasm),
             ],
             KLIENT_FIRMA_NOMI:  [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_firma_nomi)],
-            KLIENT_TELEFON1:    [
-                MessageHandler(filters.CONTACT, klient_telefon1),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, klient_telefon1),
-            ],
-            KLIENT_TELEFON2:    [
-                MessageHandler(filters.CONTACT | filters.Regex(r"^⏭"), klient_telefon2),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, klient_telefon2),
-            ],
+            KLIENT_TELEFON1:    [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_telefon1)],
+            KLIENT_TELEFON2:    [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_telefon2)],
             KLIENT_INN:         [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_inn)],
             KLIENT_ORIENTER:    [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_orienter)],
             KLIENT_LOKATSIYA:   [

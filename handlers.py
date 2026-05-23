@@ -53,6 +53,23 @@ def em(text) -> str:
     return escape_markdown(str(text), version=1)
 
 
+def format_phone(phone_raw: str) -> str:
+    """Convert any phone format to +998XXXXXXXXX"""
+    phone = ''.join(filter(str.isdigit, phone_raw))
+
+    if phone.startswith('998'):
+        phone = phone[3:]
+    elif phone.startswith('8'):
+        phone = phone[1:]
+    elif phone.startswith('0'):
+        phone = phone[1:]
+
+    if len(phone) != 9:
+        raise ValueError(f"Invalid phone: must have 9 digits, got {len(phone)}")
+
+    return f"+998{phone}"
+
+
 def safe_callback_int(data: str, sep: str = "_", index: int = -1) -> int | None:
     """Callback data dan int qiymatni xavfsiz chiqaradi."""
     try:
@@ -1731,24 +1748,33 @@ async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["klient_data"]["firma_nomi"] = firma_nomi
 
     await update.message.reply_text(
-        "📱 *1-Telefon raqami* (majburiy)\n\n"
-        "_Masalan: +998901234567_",
+        "📱 *3-QADAM: 1-Telefon raqami* (majburiy)\n\n"
+        "_Masalan: +998901234567 yoki 901234567_",
         parse_mode="Markdown",
-        reply_markup=telefon_kb(),
+        reply_markup=remove_kb(),
     )
     return KLIENT_TELEFON1
 
 
 async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """4-qadam: telefon 1."""
-    if not update.message.contact:
+    if not update.message.text:
         await update.message.reply_text(
-            "❌ Iltimos, raqam yuborish tugmasini bosing.",
-            reply_markup=telefon_kb(),
+            "❌ Iltimos, telefon raqamini kiriting.\n"
+            "_Masalan: +998901234567 yoki 998901234567_",
+            reply_markup=remove_kb(),
         )
         return KLIENT_TELEFON1
 
-    telefon1 = update.message.contact.phone_number
+    try:
+        telefon1 = format_phone(update.message.text)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n_Masalan: +998901234567 yoki 901234567_",
+            reply_markup=remove_kb(),
+        )
+        return KLIENT_TELEFON1
+
     existing_telefon = await db.check_duplicate_telefon(telefon1)
     if existing_telefon:
         await update.message.reply_text(
@@ -1758,7 +1784,7 @@ async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🏪 Kategoriya: {em(existing_telefon['kategoriya'])}\n\n"
             f"_Iltimos, boshqa telefon raqamini kiriting._",
             parse_mode="Markdown",
-            reply_markup=telefon_kb(),
+            reply_markup=remove_kb(),
         )
 
         try:
@@ -1784,7 +1810,7 @@ async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["klient_data"]["telefon1"] = telefon1
 
     await update.message.reply_text(
-        "📱 *2-Telefon raqami* (ixtiyoriy)\n\n"
+        "📱 *3-QADAM: 2-Telefon raqami* (ixtiyoriy)\n\n"
         "_Masalan: +998901234568 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
         parse_mode="Markdown",
         reply_markup=telefon2_kb(),
@@ -1794,19 +1820,27 @@ async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def klient_telefon2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """5-qadam: telefon 2 (ixtiyoriy)."""
-    if update.message.contact:
-        context.user_data["klient_data"]["telefon2"] = update.message.contact.phone_number
-    elif update.message.text == "⏭ O'tkazib yuborish":
+    if update.message.text == "⏭ O'tkazib yuborish":
         context.user_data["klient_data"]["telefon2"] = None
+    elif update.message.text:
+        try:
+            telefon2 = format_phone(update.message.text)
+            context.user_data["klient_data"]["telefon2"] = telefon2
+        except ValueError as e:
+            await update.message.reply_text(
+                f"❌ {str(e)}\n\n_Masalan: +998901234568 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
+                reply_markup=telefon2_kb(),
+            )
+            return KLIENT_TELEFON2
     else:
         await update.message.reply_text(
-            "❌ Iltimos, raqam yuboring yoki o'tkazib yuborish tugmasini bosing.",
+            "❌ Iltimos, telefon raqamini kiriting yoki o'tkazib yuborish tugmasini bosing.",
             reply_markup=telefon2_kb(),
         )
         return KLIENT_TELEFON2
 
     await update.message.reply_text(
-        "🔢 *INN raqami* (ixtiyoriy)\n"
+        "🔢 *4-QADAM: INN raqami* (ixtiyoriy)\n"
         "_Masalan: 123456789 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(
