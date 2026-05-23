@@ -1670,27 +1670,6 @@ async def new_client_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return KLIENT_RASM
 
 
-async def start_klient_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Klient registratsiyani boshlash - 1-qadam: rasm."""
-    uid = update.effective_user.id
-    user = await db.get_xodim(uid)
-
-    if not user or user[3] == "Agent":
-        await update.message.reply_text("❌ Faqat Agent bo'lmagan xodimlar klientlar qo'sha oladi.")
-        return ConversationHandler.END
-
-    context.user_data["klient_supervisor_id"] = uid
-    context.user_data["klient_data"] = {}
-
-    await update.message.reply_text(
-        "📷 *Do'kon rasmi* (majburiy)\n\n"
-        "_Iltimos, do'konning rasmi yuboring:_",
-        parse_mode="Markdown",
-        reply_markup=remove_kb(),
-    )
-    return KLIENT_RASM
-
-
 async def klient_rasm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """2-qadam: rasm qabul qilish."""
     if not update.message.photo:

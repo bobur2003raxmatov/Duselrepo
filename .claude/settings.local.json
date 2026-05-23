@@ -36,7 +36,11 @@
       "Bash(pkill -f \"python.*bot\")",
       "Bash(pkill -9 -f \"python.*bot\")",
       "Bash(TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\" python3 bot.py)",
-      "Bash(TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\" nohup python3 *)"
+      "Bash(TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\" nohup python3 *)",
+      "Bash(python3 -m py_compile handlers.py database.py bot.py)",
+      "Bash(sqlite3 *)",
+      "Bash(python3 *)",
+      "Bash(TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\" python3 *)"
     ]
   }
 }

@@ -141,7 +141,7 @@ async def init_db():
                 firma_nomi     TEXT NOT NULL,
                 telefon1       TEXT NOT NULL,
                 telefon2       TEXT,
-                inn            TEXT NOT NULL UNIQUE,
+                inn            TEXT UNIQUE,
                 orienter       TEXT NOT NULL,
                 lokatsiya_lat  REAL,
                 lokatsiya_lon  REAL,

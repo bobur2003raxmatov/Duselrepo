@@ -51,7 +51,7 @@ from handlers import (
     biriktir_checker_cb,
     admin_agent_reyting, admin_filial_lider,
     start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
-    new_client_command, start_klient_registration, klient_rasm, klient_firma_nomi, klient_telefon1,
+    new_client_command, klient_rasm, klient_firma_nomi, klient_telefon1,
     klient_telefon2, klient_inn, klient_orienter, klient_lokatsiya, klient_kategoriya,
     klient_dokon_turi, klient_distributor, klient_agent_kod, klient_vizit_kun,
     klient_chastota, klient_limit, klient_brendlar, klient_confirm,
@@ -153,7 +153,10 @@ def build_application() -> Application:
 
     # ── Klient registratsiya ConversationHandler (16 qadam) ──────
     klient_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r"^🏪 Yangi Klient$"), start_klient_registration)],
+        entry_points=[
+            MessageHandler(filters.Regex(r"^🏪 Yangi Klient$"), new_client_command),
+            CommandHandler("new_client", new_client_command),
+        ],
         states={
             KLIENT_RASM:        [MessageHandler(filters.PHOTO, klient_rasm)],
             KLIENT_FIRMA_NOMI:  [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_firma_nomi)],
@@ -182,7 +185,6 @@ def build_application() -> Application:
     app.add_handler(qidiruv_conv)
     app.add_handler(biriktir_conv)
     app.add_handler(klient_conv)
-    app.add_handler(CommandHandler("new_client", new_client_command))
     app.add_handler(cancel_cmd)
 
     app.add_handler(MessageHandler(filters.Regex(r"^⭐ Agent Reytingi$"),          admin_agent_reyting))
