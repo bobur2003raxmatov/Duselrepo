@@ -1716,6 +1716,37 @@ async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Firma nomi kamida 2 ta harf bo'lishi kerak.")
         return KLIENT_FIRMA_NOMI
 
+    existing_firma = await db.check_duplicate_firma(firma_nomi)
+    if existing_firma:
+        await update.message.reply_text(
+            f"❌ *Bu firma allaqachon ro'yxatda bor!*\n\n"
+            f"📝 Firma: {em(existing_firma['firma_nomi'])}\n"
+            f"📱 Telefon: {em(existing_firma['telefon1'])}\n"
+            f"🏪 Kategoriya: {em(existing_firma['kategoriya'])}\n\n"
+            f"_Iltimos, boshqa firma nomini kiriting._",
+            parse_mode="Markdown",
+        )
+
+        try:
+            user = await db.get_xodim(update.effective_user.id)
+            supervisor_name = user[2] if user else "Unknown"
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"⚠️ *Dublikat Aniqlandi: Firma Nomi*\n\n"
+                    f"📝 Kiritilgan firma: {em(firma_nomi)}\n"
+                    f"👤 Supervisor: {em(supervisor_name)}\n"
+                    f"📍 Allaqachon ro'yxatda:\n"
+                    f"  • Firma: {em(existing_firma['firma_nomi'])}\n"
+                    f"  • Telefon: {em(existing_firma['telefon1'])}"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.warning(f"Admin dublikat xabari yuborishda xato: {e}")
+
+        return KLIENT_FIRMA_NOMI
+
     context.user_data["klient_data"]["firma_nomi"] = firma_nomi
 
     await update.message.reply_text(
@@ -1736,7 +1767,40 @@ async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return KLIENT_TELEFON1
 
-    context.user_data["klient_data"]["telefon1"] = update.message.contact.phone_number
+    telefon1 = update.message.contact.phone_number
+    existing_telefon = await db.check_duplicate_telefon(telefon1)
+    if existing_telefon:
+        await update.message.reply_text(
+            f"❌ *Bu telefon raqami allaqachon ro'yxatda bor!*\n\n"
+            f"📝 Firma: {em(existing_telefon['firma_nomi'])}\n"
+            f"📱 Telefon: {em(existing_telefon['telefon1'])}\n"
+            f"🏪 Kategoriya: {em(existing_telefon['kategoriya'])}\n\n"
+            f"_Iltimos, boshqa telefon raqamini kiriting._",
+            parse_mode="Markdown",
+            reply_markup=telefon_kb(),
+        )
+
+        try:
+            user = await db.get_xodim(update.effective_user.id)
+            supervisor_name = user[2] if user else "Unknown"
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"⚠️ *Dublikat Aniqlandi: Telefon Raqami*\n\n"
+                    f"📱 Kiritilgan telefon: {em(telefon1)}\n"
+                    f"👤 Supervisor: {em(supervisor_name)}\n"
+                    f"📍 Allaqachon ro'yxatda:\n"
+                    f"  • Firma: {em(existing_telefon['firma_nomi'])}\n"
+                    f"  • Telefon: {em(existing_telefon['telefon1'])}"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.warning(f"Admin dublikat xabari yuborishda xato: {e}")
+
+        return KLIENT_TELEFON1
+
+    context.user_data["klient_data"]["telefon1"] = telefon1
 
     await update.message.reply_text(
         "📱 *2-Telefon raqami* (ixtiyoriy)\n\n"
@@ -1761,27 +1825,33 @@ async def klient_telefon2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return KLIENT_TELEFON2
 
     await update.message.reply_text(
-        "🔢 *INN raqami* (majburiy)\n"
-        "_Masalan: 123456789_",
+        "🔢 *INN raqami* (ixtiyoriy)\n"
+        "_Masalan: 123456789 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
         parse_mode="Markdown",
-        reply_markup=remove_kb(),
+        reply_markup=ReplyKeyboardMarkup(
+            [[KeyboardButton("⏭ O'tkazib yuborish")]],
+            resize_keyboard=True, one_time_keyboard=True,
+        ),
     )
     return KLIENT_INN
 
 
 async def klient_inn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """6-qadam: INN."""
-    inn = update.message.text.strip()
-    if not inn.isdigit() or len(inn) < 9:
-        await update.message.reply_text("❌ INN raqami 9 ta raqamdan iborat bo'lishi kerak.")
-        return KLIENT_INN
-
-    existing = await db.search_klientlar(inn)
-    if existing:
-        await update.message.reply_text("❌ Bu INN allaqachon ro'yxatda bor.")
-        return KLIENT_INN
-
-    context.user_data["klient_data"]["inn"] = inn
+    """6-qadam: INN (ixtiyoriy)."""
+    if update.message.text == "⏭ O'tkazib yuborish":
+        context.user_data["klient_data"]["inn"] = None
+    else:
+        inn = update.message.text.strip()
+        if inn and (not inn.isdigit() or len(inn) < 9):
+            await update.message.reply_text(
+                "❌ INN raqami 9 ta raqamdan iborat bo'lishi kerak yoki o'tkazib yuborish tugmasini bosing.",
+                reply_markup=ReplyKeyboardMarkup(
+                    [[KeyboardButton("⏭ O'tkazib yuborish")]],
+                    resize_keyboard=True, one_time_keyboard=True,
+                ),
+            )
+            return KLIENT_INN
+        context.user_data["klient_data"]["inn"] = inn if inn else None
 
     await update.message.reply_text(
         "📍 *Orienter* (yaqin joy tavsifi)\n"

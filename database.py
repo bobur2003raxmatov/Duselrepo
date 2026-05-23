@@ -958,3 +958,35 @@ async def get_all_klientlar_for_excel() -> list:
             "SELECT * FROM klientlar WHERE status='approved' ORDER BY firma_nomi"
         ) as cur:
             return await cur.fetchall()
+
+
+async def check_duplicate_firma(firma_nomi: str) -> dict | None:
+    """Firma nomi bo'yicha dublikat tekshirish."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM klientlar WHERE LOWER(firma_nomi) = LOWER(?) LIMIT 1",
+            (firma_nomi,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                cols = ("id", "rasm", "firma_nomi", "telefon1", "telefon2", "inn", "orienter",
+                        "lat", "lon", "kategoriya", "dokon_turi", "distributor", "agent_kod",
+                        "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id")
+                return dict(zip(cols, row))
+            return None
+
+
+async def check_duplicate_telefon(telefon: str) -> dict | None:
+    """Telefon raqami bo'yicha dublikat tekshirish."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM klientlar WHERE telefon1 = ? OR telefon2 = ? LIMIT 1",
+            (telefon, telefon)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                cols = ("id", "rasm", "firma_nomi", "telefon1", "telefon2", "inn", "orienter",
+                        "lat", "lon", "kategoriya", "dokon_turi", "distributor", "agent_kod",
+                        "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id")
+                return dict(zip(cols, row))
+            return None
