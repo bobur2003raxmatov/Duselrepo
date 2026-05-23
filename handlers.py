@@ -1624,8 +1624,8 @@ async def start_klient_registration(update: Update, context: ContextTypes.DEFAUL
     uid = update.effective_user.id
     user = await db.get_xodim(uid)
 
-    if not user or user[3] != "Supervisor":
-        await update.message.reply_text("❌ Faqat Supervisorlar klientlar qo'sha oladi.")
+    if not user or user[3] not in ("Supervisor", "Filial Rahbari"):
+        await update.message.reply_text("❌ Faqat Supervisor va Filial Rahbarlari klientlar qo'sha oladi.")
         return ConversationHandler.END
 
     context.user_data["klient_supervisor_id"] = uid
