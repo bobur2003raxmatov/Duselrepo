@@ -1709,7 +1709,16 @@ async def klient_rasm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """3-qadam: firma nomi."""
+    if not update.message or not update.message.text:
+        await update.message.reply_text(
+            "❌ Iltimos, firma nomini kiriting."
+        )
+        logger.info("[KLIENT] Invalid firma input")
+        return KLIENT_FIRMA_NOMI
+
     firma_nomi = update.message.text.strip()
+    logger.info(f"[KLIENT] Firma input: {firma_nomi}")
+
     if len(firma_nomi) < 2:
         await update.message.reply_text("❌ Firma nomi kamida 2 ta harf bo'lishi kerak.")
         return KLIENT_FIRMA_NOMI
