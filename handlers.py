@@ -1657,16 +1657,17 @@ async def new_client_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "💰 Limit: 5000000\n"
         "🏷 Brendlar: Dusel, Verla\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "_Registratsiyani boshlash uchun, do'kon rasmi yuboring._"
+        "👇 Quyida kiritish uchun talab qilingan ma'lumotlarni kiriting:"
     )
     await update.message.reply_text(template, parse_mode="Markdown", reply_markup=remove_kb())
 
     await update.message.reply_text(
-        "📷 *Do'kon rasmi* (majburiy)\n\n"
+        "📷 *1-QADAM: Do'kon rasmi* (majburiy)\n\n"
         "_Iltimos, do'konning rasmi yuboring:_",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
+    logger.info(f"[KLIENT] {uid} client registration started")
     return KLIENT_RASM
 
 
@@ -1678,9 +1679,10 @@ async def klient_rasm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     photo_file_id = update.message.photo[-1].file_id
     context.user_data["klient_data"]["rasm_file_id"] = photo_file_id
+    logger.info(f"[KLIENT] Photo received: {photo_file_id[:20]}...")
 
     await update.message.reply_text(
-        "📝 *Firma nomi yoki Do'konchi ismi* (majburiy)\n\n"
+        "📝 *2-QADAM: Firma nomi yoki Do'konchi ismi* (majburiy)\n\n"
         "_Masalan: Bobur Savdo, Xasan Dukoni, ABC Kompaniyasi_",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
