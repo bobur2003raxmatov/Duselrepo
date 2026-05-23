@@ -158,13 +158,25 @@ def build_application() -> Application:
             CommandHandler("new_client", new_client_command),
         ],
         states={
-            KLIENT_RASM:        [MessageHandler(filters.PHOTO, klient_rasm)],
+            KLIENT_RASM:        [
+                MessageHandler(filters.PHOTO, klient_rasm),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, klient_rasm),
+            ],
             KLIENT_FIRMA_NOMI:  [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_firma_nomi)],
-            KLIENT_TELEFON1:    [MessageHandler(filters.CONTACT, klient_telefon1)],
-            KLIENT_TELEFON2:    [MessageHandler(filters.CONTACT | filters.Regex(r"^⏭"), klient_telefon2)],
+            KLIENT_TELEFON1:    [
+                MessageHandler(filters.CONTACT, klient_telefon1),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, klient_telefon1),
+            ],
+            KLIENT_TELEFON2:    [
+                MessageHandler(filters.CONTACT | filters.Regex(r"^⏭"), klient_telefon2),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, klient_telefon2),
+            ],
             KLIENT_INN:         [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_inn)],
             KLIENT_ORIENTER:    [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_orienter)],
-            KLIENT_LOKATSIYA:   [MessageHandler(filters.LOCATION, klient_lokatsiya)],
+            KLIENT_LOKATSIYA:   [
+                MessageHandler(filters.LOCATION, klient_lokatsiya),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, klient_lokatsiya),
+            ],
             KLIENT_KATEGORIYA:  [CallbackQueryHandler(klient_kategoriya, pattern="^klient_kat_")],
             KLIENT_DOKON_TURI:  [CallbackQueryHandler(klient_dokon_turi, pattern="^klient_tur_")],
             KLIENT_DISTRIBUTOR: [CallbackQueryHandler(klient_distributor, pattern="^klient_dist_")],
