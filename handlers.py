@@ -1867,7 +1867,7 @@ async def klient_agent_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Agent topilmadi.", show_alert=True)
         return KLIENT_AGENT_KOD
 
-    context.user_data["klient_data"]["agent_kod"] = agent[4]  # kod
+    context.user_data["klient_data"]["agent_kod"] = agent[5]  # kod
 
     await query.edit_message_text(
         "📅 *Vizit kuni* (majburiy)",

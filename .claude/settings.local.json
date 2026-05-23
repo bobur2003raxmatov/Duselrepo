@@ -18,7 +18,15 @@
       "Bash(pkill -9 -f \"bot.py\")",
       "Bash(grep -n \"except Exception\\\\|except:\\\\|pass$\" /Users/macbookpro/telegram-bot/handlers.py)",
       "Bash(grep *)",
-      "Bash(python3 -c \"from telegram import ReplyParameters; print\\('ReplyParameters OK'\\)\")"
+      "Bash(python3 -c \"from telegram import ReplyParameters; print\\('ReplyParameters OK'\\)\")",
+      "Bash(export TOKEN=\"8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -u bot.py)",
+      "Bash(jobs -l)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "Bash(python3 bot.py)",
+      "Bash(python3 -m py_compile bot.py handlers.py keyboards.py database.py config.py utils.py)"
     ]
   }
 }

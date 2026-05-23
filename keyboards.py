@@ -391,7 +391,7 @@ def klient_chastota_kb() -> InlineKeyboardMarkup:
 
 
 def klient_distributor_kb(distributors: list) -> InlineKeyboardMarkup:
-    buttons = [[InlineKeyboardButton(d[1], callback_data=f"klient_dist_{d[0]}")] for d in distributors]
+    buttons = [[InlineKeyboardButton(d[0], callback_data=f"klient_dist_{d[4]}")] for d in distributors]
     buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="klient_cancel")])
     return InlineKeyboardMarkup(buttons)
 
