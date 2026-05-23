@@ -988,8 +988,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith(("appr_", "reje_", "block_", "unbl_")):
-        action, uid = data.split("_", 1)[0], int(data.split("_", 1)[1])
-        await _cb_user_action(query, context, action, uid)
+        try:
+            action, uid = data.split("_", 1)[0], int(data.split("_", 1)[1])
+            await _cb_user_action(query, context, action, uid)
+        except (ValueError, IndexError):
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
 
     elif data.startswith("xod_page_"):
         page = safe_callback_int(data, "_", 2)
@@ -1165,7 +1168,11 @@ async def start_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edit_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    page = int(query.data.split("_")[2])
+    try:
+        page = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+        return EDIT_USER
     rows = context.user_data.get("edit_rows") or await db.get_approved_xodimlar()
     context.user_data["edit_rows"] = rows
     await query.edit_message_reply_markup(reply_markup=edit_select_kb(rows, page))
@@ -1619,6 +1626,40 @@ async def admin_agent_reyting(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ══════════════════════════════════════════════════════════════════════════════════════
 # KLIENT REGISTRATSIYA OQIMI (16 QADAM)
 # ══════════════════════════════════════════════════════════════════════════════════════
+async def new_client_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show client registration template and start the conversation."""
+    uid = update.effective_user.id
+    user = await db.get_xodim(uid)
+
+    if not user or user[3] == "Agent":
+        await update.message.reply_text("❌ Faqat Agent bo'lmagan xodimlar klientlar qo'sha oladi.")
+        return ConversationHandler.END
+
+    template = (
+        "📋 *Yangi Klient Shablon:*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📸 Rasm: (do'kon rasmi)\n"
+        "🏢 Firma nomi: \n"
+        "📱 Telefon 1: \n"
+        "📱 Telefon 2: \n"
+        "🔢 INN: \n"
+        "📍 Orienter: \n"
+        "📌 Lokatsiya: \n"
+        "🗂 Kategoriya: \n"
+        "🏪 Do'kon turi: \n"
+        "👤 Distributor: \n"
+        "👨 Agent kodi: \n"
+        "📅 Vizit kuni: \n"
+        "🔄 Chastota: \n"
+        "💰 Limit: \n"
+        "🏷 Brendlar: \n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "_Registratsiyani boshlash uchun, do'kon rasmi yuboring._"
+    )
+    await update.message.reply_text(template, parse_mode="Markdown")
+    return await start_klient_registration(update, context)
+
+
 async def start_klient_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Klient registratsiyani boshlash - 1-qadam: rasm."""
     uid = update.effective_user.id

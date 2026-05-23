@@ -51,7 +51,7 @@ from handlers import (
     biriktir_checker_cb,
     admin_agent_reyting, admin_filial_lider,
     start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
-    start_klient_registration, klient_rasm, klient_firma_nomi, klient_telefon1,
+    new_client_command, start_klient_registration, klient_rasm, klient_firma_nomi, klient_telefon1,
     klient_telefon2, klient_inn, klient_orienter, klient_lokatsiya, klient_kategoriya,
     klient_dokon_turi, klient_distributor, klient_agent_kod, klient_vizit_kun,
     klient_chastota, klient_limit, klient_brendlar, klient_confirm,
@@ -182,6 +182,7 @@ def build_application() -> Application:
     app.add_handler(qidiruv_conv)
     app.add_handler(biriktir_conv)
     app.add_handler(klient_conv)
+    app.add_handler(CommandHandler("new_client", new_client_command))
     app.add_handler(cancel_cmd)
 
     app.add_handler(MessageHandler(filters.Regex(r"^⭐ Agent Reytingi$"),          admin_agent_reyting))
@@ -209,6 +210,7 @@ async def post_init(app: Application):
     logger.info("✅ Ma'lumotlar bazasi tayyor.")
     await app.bot.set_my_commands([
         BotCommand("start",  "Botni qayta ishga tushirish"),
+        BotCommand("new_client", "Yangi klient registratsiyasi"),
         BotCommand("cancel", "Jarayonni bekor qilish"),
     ])
     # General topicda faqat adminlar yoza olsin
