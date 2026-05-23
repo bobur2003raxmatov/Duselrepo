@@ -60,6 +60,7 @@ def admin_kb() -> ReplyKeyboardMarkup:
             ["📝 Xodimni Tahrirlash",      "📥 Excel"],
             ["🔍 Xodim Qidirish",          "🔗 Biriktirish"],
             ["⭐ Agent Reytingi",           "🏆 Filial Reytingi"],
+            ["🏪 Klientlar"],
         ],
         resize_keyboard=True,
     )
@@ -424,4 +425,35 @@ def klient_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Tasdiqlash", callback_data="klient_submit")],
         [InlineKeyboardButton("✏️ Qayta toldirish", callback_data="klient_cancel")],
+    ])
+
+
+def klientlar_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+
+    buttons = []
+    for r in rows[start:end]:
+        status_icon = "✅" if r[17] == "approved" else "⏳" if r[17] == "pending" else "❌"
+        buttons.append([InlineKeyboardButton(
+            f"{status_icon} {r[2]} | {r[11]} | INN: {r[5]}",
+            callback_data=f"klient_view_{r[0]}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"klientlar_page_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"klientlar_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_approval_kb(klient_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"klient_approve_{klient_id}")],
+        [InlineKeyboardButton("❌ Rad etish", callback_data=f"klient_reject_{klient_id}")],
     ])

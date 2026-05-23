@@ -1038,6 +1038,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (IndexError, ValueError):
             await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
 
+    # Klient callbacks
+    elif data.startswith("klient_view_"):
+        await klient_view_callback(update, context)
+
+    elif data.startswith("klient_approve_"):
+        await klient_approve_callback(update, context)
+
+    elif data.startswith("klient_reject_"):
+        await klient_reject_callback(update, context)
+
+    elif data.startswith("klientlar_page_"):
+        page = safe_callback_int(data, "_", 2)
+        if page is None:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        rows = await db.get_all_klientlar()
+        from keyboards import klientlar_page_inline
+        matn = f"🏪 *Klientlar* ({len(rows)} ta)"
+        await query.edit_message_text(matn, parse_mode="Markdown", reply_markup=klientlar_page_inline(rows, page))
+
 
 # ══════════════════════════════════════════════
 # ADMIN PANEL HANDLERLARI
@@ -2038,3 +2058,146 @@ async def klient_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await query.edit_message_text("❌ Qayta boshlaylik. Ismingizni kiriting:")
         return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ADMIN KLIENT BOSHQARUVI
+# ══════════════════════════════════════════════════════════════════════════════════════
+@admin_only
+async def admin_klientlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin - barcha klientlarni ko'rish."""
+    rows = await db.get_all_klientlar()
+    if not rows:
+        await update.message.reply_text("🏪 Klientlar mavjud emas.")
+        return
+
+    total = len(rows)
+    matn = f"🏪 *Klientlar* ({total} ta)\n\n"
+    matn += "_Profil ko'rish uchun klientni bosing:_"
+
+    from keyboards import klientlar_page_inline
+    await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=klientlar_page_inline(rows, 0))
+
+
+async def _show_klient_profile_admin(send_fn, klient_id: int, context=None):
+    """Admin uchun klient profilini ko'rsatish."""
+    klient = await db.get_klient(klient_id)
+    if not klient:
+        await send_fn("❌ Klient topilmadi.")
+        return
+
+    cols = ("id", "rasm", "firma_nomi", "telefon1", "telefon2", "inn", "orienter",
+            "lat", "lon", "kategoriya", "dokon_turi", "distributor", "agent_kod",
+            "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id")
+    data = dict(zip(cols, klient))
+
+    profile = (
+        f"🏪 *Klient Profili*\n\n"
+        f"📝 Firma: {em(data['firma_nomi'])}\n"
+        f"📱 Tel 1: {em(data['telefon1'])}\n"
+        f"📱 Tel 2: {em(data['telefon2'] or '—')}\n"
+        f"🔢 INN: {em(data['inn'])}\n"
+        f"📍 Orienter: {em(data['orienter'])}\n"
+        f"🏪 Kategoriya: {em(data['kategoriya'])}\n"
+        f"🏢 Do'kon turi: {em(data['dokon_turi'])}\n"
+        f"🚚 Distributor: {em(data['distributor'])}\n"
+        f"👤 Agent kodi: {em(data['agent_kod'])}\n"
+        f"📅 Vizit: {em(data['vizit_kun'])}\n"
+        f"🔄 Chastota: {em(data['chastota'])}\n"
+        f"💰 Limit: {em(str(data['limit']))}\n"
+        f"🏷️ Brendlar: {em(data['brendlar'])}\n"
+        f"📊 Holat: {em(data['status'])}\n"
+    )
+
+    from keyboards import klient_approval_kb
+    if data['status'] == 'pending':
+        await send_fn(profile, parse_mode="Markdown", reply_markup=klient_approval_kb(klient_id))
+    else:
+        await send_fn(profile, parse_mode="Markdown")
+
+
+async def klient_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Klient profilini ko'rish (admin callback)."""
+    query = update.callback_query
+    await query.answer()
+
+    klient_id = safe_callback_int(query.data, "_", 2)
+    if not klient_id:
+        return
+
+    await _show_klient_profile_admin(query.edit_message_text, klient_id, context)
+
+
+async def klient_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Klientni tasdiqlash."""
+    query = update.callback_query
+    await query.answer()
+
+    klient_id = safe_callback_int(query.data, "_", 2)
+    if not klient_id:
+        return
+
+    klient = await db.get_klient(klient_id)
+    if not klient:
+        await query.answer("❌ Klient topilmadi.", show_alert=True)
+        return
+
+    await db.approve_klient(klient_id)
+    await query.edit_message_text(f"✅ Klient #{klient_id} tasdiqlandi!")
+
+    try:
+        sup_id = klient[20]
+        await context.bot.send_message(
+            chat_id=sup_id,
+            text=f"✅ Do'koningiz *{em(klient[2])}* tasdiqlandi! Yangi klientni boshqarish uchun /start bosing.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.warning(f"Supervisor xabari yuborishda xato: {e}")
+
+
+async def klient_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Klientni rad etish uchun sababni so'rash."""
+    query = update.callback_query
+    await query.answer()
+
+    klient_id = safe_callback_int(query.data, "_", 2)
+    if not klient_id:
+        return
+
+    context.user_data["klient_reject_id"] = klient_id
+    await query.edit_message_text(
+        "❌ *Rad etish sababini yozing:*\n\n"
+        "_Masalan: Noto'g'ri ma'lumot, duplikat, boshqa sabab_",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+
+
+async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Klientni rad etish."""
+    klient_id = context.user_data.get("klient_reject_id")
+
+    if not klient_id:
+        return  # Ignore message if not in reject state
+
+    reason = update.message.text.strip()
+    klient = await db.get_klient(klient_id)
+    if not klient:
+        await update.message.reply_text("❌ Klient topilmadi.")
+        return
+
+    await db.reject_klient(klient_id, reason)
+    await update.message.reply_text(f"❌ Klient #{klient_id} rad etildi!")
+
+    try:
+        sup_id = klient[20]
+        await context.bot.send_message(
+            chat_id=sup_id,
+            text=f"❌ Do'kon *{em(klient[2])}* rad etildi.\n\n_Sabab: {em(reason)}_",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.warning(f"Supervisor xabari yuborishda xato: {e}")
+
+    context.user_data.pop("klient_reject_id", None)

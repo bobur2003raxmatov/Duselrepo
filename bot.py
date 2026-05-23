@@ -23,6 +23,11 @@ from config import (
     EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
     BIRIKTIR_EDIT_FIELD, BIRIKTIR_EDIT_VALUE,
+    KLIENT_RASM, KLIENT_FIRMA_NOMI, KLIENT_TELEFON1, KLIENT_TELEFON2,
+    KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
+    KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
+    KLIENT_VIZIT_KUN, KLIENT_CHASTOTA, KLIENT_LIMIT, KLIENT_BRENDLAR,
+    KLIENT_CONFIRM,
 )
 from database import init_db
 from utils import daily_report_job, weekly_report_job, agent_reminder_job
@@ -46,6 +51,12 @@ from handlers import (
     biriktir_checker_cb,
     admin_agent_reyting, admin_filial_lider,
     start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
+    start_klient_registration, klient_rasm, klient_firma_nomi, klient_telefon1,
+    klient_telefon2, klient_inn, klient_orienter, klient_lokatsiya, klient_kategoriya,
+    klient_dokon_turi, klient_distributor, klient_agent_kod, klient_vizit_kun,
+    klient_chastota, klient_limit, klient_brendlar, klient_confirm,
+    admin_klientlar, klient_view_callback, klient_approve_callback, klient_reject_callback,
+    klient_reject_reason,
 )
 
 # ── Logging: console + file ───────────────────────────────────────
@@ -140,10 +151,37 @@ def build_application() -> Application:
         per_message=False,
     )
 
+    # ── Klient registratsiya ConversationHandler (16 qadam) ──────
+    klient_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex(r"^🏪 Yangi Klient$"), start_klient_registration)],
+        states={
+            KLIENT_RASM:        [MessageHandler(filters.PHOTO, klient_rasm)],
+            KLIENT_FIRMA_NOMI:  [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_firma_nomi)],
+            KLIENT_TELEFON1:    [MessageHandler(filters.CONTACT, klient_telefon1)],
+            KLIENT_TELEFON2:    [MessageHandler(filters.CONTACT | filters.Regex(r"^⏭"), klient_telefon2)],
+            KLIENT_INN:         [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_inn)],
+            KLIENT_ORIENTER:    [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_orienter)],
+            KLIENT_LOKATSIYA:   [MessageHandler(filters.LOCATION, klient_lokatsiya)],
+            KLIENT_KATEGORIYA:  [CallbackQueryHandler(klient_kategoriya, pattern="^klient_kat_")],
+            KLIENT_DOKON_TURI:  [CallbackQueryHandler(klient_dokon_turi, pattern="^klient_tur_")],
+            KLIENT_DISTRIBUTOR: [CallbackQueryHandler(klient_distributor, pattern="^klient_dist_")],
+            KLIENT_AGENT_KOD:   [CallbackQueryHandler(klient_agent_kod, pattern="^klient_agent_")],
+            KLIENT_VIZIT_KUN:   [CallbackQueryHandler(klient_vizit_kun, pattern="^klient_kun_")],
+            KLIENT_CHASTOTA:    [CallbackQueryHandler(klient_chastota, pattern="^klient_chas_")],
+            KLIENT_LIMIT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_limit)],
+            KLIENT_BRENDLAR:    [CallbackQueryHandler(klient_brendlar, pattern="^klient_brand_|^klient_brands_confirm|^klient_cancel$")],
+            KLIENT_CONFIRM:     [CallbackQueryHandler(klient_confirm, pattern="^klient_submit|^klient_cancel$")],
+        },
+        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        allow_reentry=True,
+        per_message=False,
+    )
+
     app.add_handler(royxat_conv)
     app.add_handler(tahrir_conv)
     app.add_handler(qidiruv_conv)
     app.add_handler(biriktir_conv)
+    app.add_handler(klient_conv)
     app.add_handler(cancel_cmd)
 
     app.add_handler(MessageHandler(filters.Regex(r"^⭐ Agent Reytingi$"),          admin_agent_reyting))
@@ -153,7 +191,12 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
+    app.add_handler(MessageHandler(filters.Regex(r"^🏪 Klientlar$"),              admin_klientlar))
     app.add_handler(MessageReactionHandler(reaction_handler))
+
+    # Klient reject reason handler
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, klient_reject_reason))
+
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
