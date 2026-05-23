@@ -18,6 +18,7 @@ from keyboards import (
     biriktirish_list_kb, biriktir_detail_kb,
     biriktirish_agents_kb, biriktirish_checkers_kb, checker_sorov_kb,
     urgency_kb, stars_kb, filial_filter_kb,
+    pending_xodimlar_inline, blocked_xodimlar_inline,
 )
 from utils import (
     is_topic_valid, check_sla_timeout, generate_excel,
@@ -38,7 +39,18 @@ logger = logging.getLogger(__name__)
 
 def em(text) -> str:
     """Markdown v1 uchun foydalanuvchi matnini xavfsiz qiladi."""
+    if text is None:
+        return "—"
     return escape_markdown(str(text), version=1)
+
+
+def safe_callback_int(data: str, sep: str = "_", index: int = -1) -> int | None:
+    """Callback data dan int qiymatni xavfsiz chiqaradi."""
+    try:
+        parts = data.split(sep)
+        return int(parts[index])
+    except (IndexError, ValueError):
+        return None
 
 
 def _schedule_sla(context, group_id: int, ism: str):
@@ -47,11 +59,13 @@ def _schedule_sla(context, group_id: int, ism: str):
         check_sla_timeout,
         when=SLA_TIMEOUT_SEC,
         data={"group_id": group_id, "x_ism": ism, "reminder": 1},
+        name=f"sla_{group_id}_1",
     )
     context.job_queue.run_once(
         check_sla_timeout,
         when=SLA_TIMEOUT_SEC * 2,
         data={"group_id": group_id, "x_ism": ism, "reminder": 2},
+        name=f"sla_{group_id}_2",
     )
 
 
@@ -119,7 +133,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     await update.message.reply_text(
-        "Assalomu Alaykum! Dusel Company botiga xush kelibsiz. 👋\n\n"
+        "Assalomu Alaykum! Dusel Company botiga xush kelibsiz! 👋\n\n"
         "Iltimos, *Ism va Familiyangizni* kiriting:",
         parse_mode="Markdown",
     )
@@ -252,13 +266,13 @@ async def tugilgan_kun_olish(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_id=ADMIN_ID,
         text=(
             f"🔔 *Yangi xodim ro'yxatdan o'tdi:*\n\n"
-            f"👤 Ism: {d['ism']}\n"
-            f"💼 Lavozim: {d['lavozim']}\n"
-            f"🔑 Kod: `{d['kod']}`\n"
-            f"🏢 Viloyat: {d['filial']}\n"
-            f"📱 Tel 1: {d['telefon1']}\n"
-            f"📱 Tel 2: {d['telefon2']}\n"
-            f"🎂 Tug'ilgan kun: {tkun}\n"
+            f"👤 Ism: {em(d['ism'])}\n"
+            f"💼 Lavozim: {em(d['lavozim'])}\n"
+            f"🔑 Kod: `{em(d['kod'])}`\n"
+            f"🏢 Viloyat: {em(d['filial'])}\n"
+            f"📱 Tel 1: {em(d['telefon1'])}\n"
+            f"📱 Tel 2: {em(d['telefon2'])}\n"
+            f"🎂 Tug'ilgan kun: {em(tkun)}\n"
             f"🆔 Telegram ID: `{uid}`"
         ),
         parse_mode="Markdown",
@@ -444,6 +458,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     checker_timeout_job,
                     when=CHECKER_TIMEOUT_SEC,
                     data={"group_id": group_id, "ism": ism},
+                    name=f"checker_timeout_{group_id}",
                 )
             else:
                 _schedule_sla(context, group_id, ism)
@@ -661,12 +676,9 @@ async def _cb_xod_page(query, page: int):
         await query.edit_message_text("👥 Tizimda faol xodimlar hozircha yo'q.")
         return
     total = len(rows)
-    start = page * PAGE_SIZE
-    end   = min(start + PAGE_SIZE, total)
-    matn  = f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
-    for r in rows[start:end]:
-        matn += f"👤 *{em(r[0])}* | {em(r[1])} | Kod: `{em(r[3])}` | ID: `{r[4]}`\n"
-    await query.edit_message_text(matn, parse_mode="Markdown", reply_markup=xodimlar_page_inline(page, total))
+    matn = f"👥 *Faol xodimlar ({page * PAGE_SIZE + 1}–{min((page + 1) * PAGE_SIZE, total)} / {total}):*\n\n"
+    matn += "_Profil ko'rish uchun ismlardan birini bosing:_"
+    await query.edit_message_text(matn, parse_mode="Markdown", reply_markup=xodimlar_page_inline(rows, page))
 
 
 async def _cb_group_action(query, context, action: str, group_id: int):
@@ -686,22 +698,34 @@ async def _cb_group_action(query, context, action: str, group_id: int):
             reply_markup=group_bajarildi_inline(group_id),
         )
         try:
+            urgency = await db.get_group_urgency(group_id)
+            URGENCY_LABEL = {"shoshilinch": "🔴 Shoshilinch", "orta": "🟡 O'rta", "oddiy": "🟢 Oddiy"}
+            urgency_txt = URGENCY_LABEL.get(urgency, "—")
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"🔄 #{group_id}-sonli so'rovingiz ko'rib chiqilmoqda.",
+                text=f"🔄 #{group_id}-sonli so'rovingiz ko'rib chiqilmoqda ({urgency_txt}).",
             )
         except Exception as e:
             logger.warning(f"Guruh jarayon xabari yuborishda xato: {e}")
 
     elif action == "done":
+        # SLA reminder joblarni bekor qilish
+        for j in context.job_queue.get_jobs_by_name(f"sla_{group_id}_1"):
+            j.schedule_removal()
+        for j in context.job_queue.get_jobs_by_name(f"sla_{group_id}_2"):
+            j.schedule_removal()
+
         await db.update_group_holat(group_id, "bajarildi")
         main_msg = await db.get_most_important_msg(group_id)
         await query.edit_message_text(f"✅ #{group_id}-guruh yakunlandi!")
         try:
+            urgency = await db.get_group_urgency(group_id)
+            URGENCY_LABEL = {"shoshilinch": "🔴 Shoshilinch", "orta": "🟡 O'rta", "oddiy": "🟢 Oddiy"}
+            urgency_txt = URGENCY_LABEL.get(urgency, "—")
             rp = ReplyParameters(message_id=main_msg[2]) if main_msg else None
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"✅ #{group_id}-sonli so'rovingiz bajarildi!",
+                text=f"✅ #{group_id}-sonli so'rovingiz bajarildi ({urgency_txt})!",
                 reply_parameters=rp,
             )
         except Exception as e:
@@ -750,9 +774,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Urgency tanlash (agent tomonidan) ─────────────────────────
     if data.startswith("urgency_"):
-        parts    = data.split("_")
-        group_id = int(parts[1])
-        level    = parts[2]
+        parts = data.split("_")
+        if len(parts) < 3:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        try:
+            group_id = int(parts[1])
+            level = parts[2]
+        except (IndexError, ValueError):
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
         URGENCY_LABEL = {"shoshilinch": "🔴 Shoshilinch", "orta": "🟡 O'rta", "oddiy": "🟢 Oddiy"}
         label = URGENCY_LABEL.get(level, level)
 
@@ -807,9 +838,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Yulduz reyting (checker tomonidan) ────────────────────────
     if data.startswith("star_"):
-        parts    = data.split("_")
-        group_id = int(parts[1])
-        yulduz   = int(parts[2])
+        parts = data.split("_")
+        if len(parts) < 3:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        try:
+            group_id = int(parts[1])
+            yulduz = int(parts[2])
+        except (IndexError, ValueError):
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
         checker  = query.from_user.id
         group    = await db.get_group_info(group_id)
         if not group:
@@ -836,8 +874,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Checker callback (admin bo'lmagan xodimlar uchun) ─────────
     if data.startswith("bir_tasd_"):
-        group_id  = int(data.split("_")[2])
-        checker   = query.from_user.id
+        group_id = safe_callback_int(data, "_", 2)
+        if not group_id:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        checker = query.from_user.id
         group     = await db.get_group_info(group_id)
         if not group:
             await query.edit_message_text("❌ Topshiriq topilmadi.")
@@ -849,6 +890,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         checker_row  = await db.get_xodim(checker)
         checker_ism  = checker_row[2] if checker_row else "Tekshiruvchi"
         await db.update_checker_faollik(checker)
+
+        # Checker timeout jobni bekor qilish
+        for j in context.job_queue.get_jobs_by_name(f"checker_timeout_{group_id}"):
+            j.schedule_removal()
+
         await query.edit_message_text(f"✅ #{group_id} topshiriqni tasdiqladingiz!")
         # Feature 17: Baholash so'rash
         try:
@@ -873,8 +919,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("bir_rad_"):
-        group_id  = int(data.split("_")[2])
-        checker   = query.from_user.id
+        group_id = safe_callback_int(data, "_", 2)
+        if not group_id:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        checker = query.from_user.id
         group     = await db.get_group_info(group_id)
         if not group:
             await query.edit_message_text("❌ Topshiriq topilmadi.")
@@ -884,6 +933,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Siz bu topshiriqni rad etish huquqiga ega emassiz.", show_alert=True)
             return
         await db.update_checker_faollik(checker)
+
+        # Checker timeout jobni bekor qilish
+        for j in context.job_queue.get_jobs_by_name(f"checker_timeout_{group_id}"):
+            j.schedule_removal()
+
         await db.update_group_holat(group_id, "rad etildi")
         checker_row = await db.get_xodim(checker)
         checker_ism = checker_row[2] if checker_row else "Tekshiruvchi"
@@ -909,7 +963,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("xodim_profil_"):
-        uid = int(data.split("_")[2])
+        uid = safe_callback_int(data, "_", 2)
+        if not uid:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
         row = await db.get_xodim_full(uid)
         if not row:
             await query.edit_message_text("❌ Xodim topilmadi.")
@@ -926,15 +983,51 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _cb_user_action(query, context, action, uid)
 
     elif data.startswith("xod_page_"):
-        await _cb_xod_page(query, int(data.split("_")[2]))
+        page = safe_callback_int(data, "_", 2)
+        if page is None:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        await _cb_xod_page(query, page)
+
+    elif data.startswith("pending_page_"):
+        page = safe_callback_int(data, "_", 2)
+        if page is None:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        rows = await db.get_pending_xodimlar()
+        await _send_pending_page(query.edit_message_text, rows, page)
+
+    elif data.startswith("blocked_page_"):
+        page = safe_callback_int(data, "_", 2)
+        if page is None:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        rows = await db.get_blocked_xodimlar()
+        await _send_blocked_page(query.edit_message_text, rows, page)
 
     elif data.startswith(("grp_prog_", "grp_done_")):
         parts = data.split("_")
-        await _cb_group_action(query, context, parts[1], int(parts[2]))
+        if len(parts) < 3:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        try:
+            action = parts[1]
+            group_id = int(parts[2])
+            await _cb_group_action(query, context, action, group_id)
+        except (IndexError, ValueError):
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
 
     elif data.startswith(("prog_", "done_")):
-        action, task_id = data.split("_", 1)[0], int(data.split("_", 1)[1])
-        await _cb_task_action(query, context, action, task_id)
+        parts = data.split("_", 1)
+        if len(parts) < 2:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        try:
+            action = parts[0]
+            task_id = int(parts[1])
+            await _cb_task_action(query, context, action, task_id)
+        except (IndexError, ValueError):
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
 
 
 # ══════════════════════════════════════════════
@@ -958,9 +1051,8 @@ async def _send_xodimlar_page(send_fn, rows: list, page: int):
     start = page * PAGE_SIZE
     end   = min(start + PAGE_SIZE, total)
     matn  = f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
-    for r in rows[start:end]:
-        matn += f"👤 *{r[0]}* | {r[1]} | Kod: `{r[3]}` | ID: `{r[4]}`\n"
-    await send_fn(matn, parse_mode="Markdown", reply_markup=xodimlar_page_inline(page, total))
+    matn += "_Profil ko'rish uchun ismlardan birini bosing:_"
+    await send_fn(matn, parse_mode="Markdown", reply_markup=xodimlar_page_inline(rows, page))
 
 
 @admin_only
@@ -972,19 +1064,31 @@ async def admin_xodimlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_xodimlar_page(update.message.reply_text, rows, page=0)
 
 
+async def _send_pending_page(send_fn, rows: list, page: int):
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+    matn = f"⏳ *Kutilayotgan arizalar ({start + 1}–{end} / {total}):*\n\n"
+    matn += "_Profil ko'rish yoki tasdiqlash uchun ismlardan birini bosing:_"
+    await send_fn(matn, parse_mode="Markdown", reply_markup=pending_xodimlar_inline(rows, page))
+
+
 @admin_only
 async def admin_kutilayotganlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = await db.get_pending_xodimlar()
     if not rows:
         await update.message.reply_text("✅ Kutilayotgan arizalar yo'q.")
         return
-    for u in rows:
-        await update.message.reply_text(
-            f"⏳ *Kutilayotgan ariza:* {u[1]} ({u[2]})\n"
-            f"🔑 Kod: `{u[3]}`  |  🏢 Filial: {u[4]}",
-            parse_mode="Markdown",
-            reply_markup=tasdiq_inline(u[0]),
-        )
+    await _send_pending_page(update.message.reply_text, rows, page=0)
+
+
+async def _send_blocked_page(send_fn, rows: list, page: int):
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+    matn = f"🚫 *Bloklanganlar ({start + 1}–{end} / {total}):*\n\n"
+    matn += "_Profil ko'rish yoki blokdan ochish uchun ismlardan birini bosing:_"
+    await send_fn(matn, parse_mode="Markdown", reply_markup=blocked_xodimlar_inline(rows, page))
 
 
 @admin_only
@@ -993,12 +1097,7 @@ async def admin_bloklanganlar(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not rows:
         await update.message.reply_text("🚫 Bloklanganlar mavjud emas.")
         return
-    for r in rows:
-        await update.message.reply_text(
-            f"🚫 *Bloklangan:* {r[1]}\n🔑 Kod: `{r[4]}`",
-            parse_mode="Markdown",
-            reply_markup=unblock_inline(r[0]),
-        )
+    await _send_blocked_page(update.message.reply_text, rows, page=0)
 
 
 @admin_only

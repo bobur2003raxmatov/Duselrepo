@@ -97,15 +97,27 @@ def edit_field_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def xodimlar_page_inline(page: int, total: int) -> InlineKeyboardMarkup | None:
+def xodimlar_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+
     buttons = []
+    for r in rows[start:end]:
+        buttons.append([InlineKeyboardButton(
+            f"👤 {r[0]} — {r[1]} | {r[2]}",
+            callback_data=f"xodim_profil_{r[4]}",
+        )])
+
+    nav = []
     if page > 0:
-        buttons.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"xod_page_{page - 1}"))
-    if (page + 1) * PAGE_SIZE < total:
-        buttons.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"xod_page_{page + 1}"))
-    if not buttons:
-        return None
-    return InlineKeyboardMarkup([buttons])
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"xod_page_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"xod_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    return InlineKeyboardMarkup(buttons)
 
 
 def group_sorov_inline(group_id: int) -> InlineKeyboardMarkup:
@@ -294,6 +306,52 @@ def xodim_profil_kb(user_id: int, status: str) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton("🚫 Bloklash", callback_data=f"block_{user_id}")])
     elif status == "blocked":
         buttons.append([InlineKeyboardButton("🔓 Blokdan ochish", callback_data=f"unbl_{user_id}")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def pending_xodimlar_inline(rows: list, page: int) -> InlineKeyboardMarkup:
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+
+    buttons = []
+    for r in rows[start:end]:
+        buttons.append([InlineKeyboardButton(
+            f"⏳ {r[1]} ({r[2]}) | {r[4]}",
+            callback_data=f"xodim_profil_{r[0]}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"pending_page_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"pending_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    return InlineKeyboardMarkup(buttons)
+
+
+def blocked_xodimlar_inline(rows: list, page: int) -> InlineKeyboardMarkup:
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+
+    buttons = []
+    for r in rows[start:end]:
+        buttons.append([InlineKeyboardButton(
+            f"🚫 {r[1]} | Kod: {r[4]}",
+            callback_data=f"xodim_profil_{r[0]}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"blocked_page_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"blocked_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
     return InlineKeyboardMarkup(buttons)
 
 

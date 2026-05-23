@@ -1,7 +1,10 @@
 import os
 
-TOKEN         = os.environ.get("TOKEN", "8465121120:AAH8Gz0qKC-S0RCe7n8PswzCMMu-Igd4qx8")
-ADMIN_ID      = int(os.environ.get("ADMIN_ID", "7839267271"))
+TOKEN = os.environ.get("TOKEN")
+if not TOKEN:
+    raise ValueError("❌ TOKEN environment variable is required. Set it before running the bot.")
+
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "7839267271"))
 GROUP_CHAT_ID = -1003802115020
 DB_PATH       = os.environ.get("DB_PATH", "dusel_company.db")
 

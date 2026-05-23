@@ -647,6 +647,16 @@ async def set_urgency(group_id: int, urgency: str):
         await db.commit()
 
 
+async def get_group_urgency(group_id: int) -> str | None:
+    """Guruhning urgency darajasini qaytaradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT urgency FROM xabar_guruhi WHERE id=?", (group_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
 # ── Baholash (reyting) ───────────────────────────────────────────
 async def add_baholash(group_id: int, checker_id: int, agent_id: int, yulduz: int):
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
