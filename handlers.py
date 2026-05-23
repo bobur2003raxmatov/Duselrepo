@@ -1758,21 +1758,27 @@ async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """4-qadam: telefon 1."""
-    if not update.message.text:
+    if not update.message or not update.message.text:
         await update.message.reply_text(
             "❌ Iltimos, telefon raqamini kiriting.\n"
             "_Masalan: +998901234567 yoki 998901234567_",
             reply_markup=remove_kb(),
         )
+        logger.info("[KLIENT] Invalid phone input in telefon1")
         return KLIENT_TELEFON1
 
+    phone_input = update.message.text.strip()
+    logger.info(f"[KLIENT] Phone1 input: {phone_input}")
+
     try:
-        telefon1 = format_phone(update.message.text)
+        telefon1 = format_phone(phone_input)
+        logger.info(f"[KLIENT] Phone1 formatted: {telefon1}")
     except ValueError as e:
         await update.message.reply_text(
             f"❌ {str(e)}\n\n_Masalan: +998901234567 yoki 901234567_",
             reply_markup=remove_kb(),
         )
+        logger.warning(f"[KLIENT] Phone1 format error: {e}")
         return KLIENT_TELEFON1
 
     existing_telefon = await db.check_duplicate_telefon(telefon1)
@@ -1820,24 +1826,31 @@ async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def klient_telefon2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """5-qadam: telefon 2 (ixtiyoriy)."""
-    if update.message.text == "⏭ O'tkazib yuborish":
-        context.user_data["klient_data"]["telefon2"] = None
-    elif update.message.text:
-        try:
-            telefon2 = format_phone(update.message.text)
-            context.user_data["klient_data"]["telefon2"] = telefon2
-        except ValueError as e:
-            await update.message.reply_text(
-                f"❌ {str(e)}\n\n_Masalan: +998901234568 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
-                reply_markup=telefon2_kb(),
-            )
-            return KLIENT_TELEFON2
-    else:
+    if not update.message or not update.message.text:
         await update.message.reply_text(
             "❌ Iltimos, telefon raqamini kiriting yoki o'tkazib yuborish tugmasini bosing.",
             reply_markup=telefon2_kb(),
         )
         return KLIENT_TELEFON2
+
+    text_input = update.message.text.strip()
+    logger.info(f"[KLIENT] Phone2 input: {text_input}")
+
+    if text_input == "⏭ O'tkazib yuborish":
+        context.user_data["klient_data"]["telefon2"] = None
+        logger.info("[KLIENT] Phone2 skipped")
+    else:
+        try:
+            telefon2 = format_phone(text_input)
+            context.user_data["klient_data"]["telefon2"] = telefon2
+            logger.info(f"[KLIENT] Phone2 formatted: {telefon2}")
+        except ValueError as e:
+            await update.message.reply_text(
+                f"❌ {str(e)}\n\n_Masalan: +998901234568 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
+                reply_markup=telefon2_kb(),
+            )
+            logger.warning(f"[KLIENT] Phone2 format error: {e}")
+            return KLIENT_TELEFON2
 
     await update.message.reply_text(
         "🔢 *4-QADAM: INN raqami* (ixtiyoriy)\n"
