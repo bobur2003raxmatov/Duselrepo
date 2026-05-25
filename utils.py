@@ -221,3 +221,22 @@ async def generate_excel(x_data: list, m_data: list) -> str:
         ).to_excel(writer, sheet_name="Topshiriqlar_SLA", index=False)
 
     return filename
+
+
+async def generate_klientlar_excel(rows: list) -> str:
+    suffix = f"_Ochilgan_Klientlar_{datetime.now().strftime('%d_%m_%Y')}.xlsx"
+    fd, filename = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+
+    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
+        pd.DataFrame(
+            rows,
+            columns=[
+                "ID", "Firma nomi", "Tel 1", "Tel 2", "INN",
+                "Orienter", "Lat", "Lon", "Manzil",
+                "Kategoriya", "Do'kon turi", "Distributor", "Agent kodi",
+                "Limit", "Brendlar", "Holat", "Sana", "Supervisor ID",
+            ]
+        ).to_excel(writer, sheet_name="Ochilgan Klientlar", index=False)
+
+    return filename

@@ -1,0 +1,1140 @@
+"""
+So'rov (request) workflow handlers.
+
+Agent (all 4 types) : Agent → Supervisor (approval) → Group
+Supervisor / FR     : → Group directly (no approval step)
+Admin               : receives NO operational requests
+"""
+import json
+import logging
+from datetime import datetime
+
+from telegram import Update, InputMediaPhoto
+from telegram.ext import ContextTypes, ConversationHandler
+
+import database as db
+from config import (
+    ADMIN_ID,
+    SOROV_TUR, SOROV_DOKON, SOROV_LOK, SOROV_TEL,
+    SOROV_FOTO, SOROV_IZOH,
+    SOROV_BATCH_COLLECT, SOROV_BATCH_PREVIEW,
+    LIMIT_DOKON, LIMIT_SUMMA,
+    INSTRUKSIYA_VIDEO_ID, BATCH_TIMEOUT_SEC,
+)
+from keyboards import (
+    remove_kb, agent_kb, supervisor_kb, filial_rahbari_kb,
+    sorov_tur_kb, sorov_tasdiqlash_kb,
+    batch_collect_kb, batch_preview_kb,
+)
+from telegram.helpers import escape_markdown
+
+logger = logging.getLogger(__name__)
+
+
+# ══════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════
+
+def em(text) -> str:
+    return escape_markdown(str(text) if text is not None else "—", version=2)
+
+
+def _lavozim_to_role(lavozim: str) -> str:
+    return {
+        "Agent":          "agent",
+        "Supervisor":     "supervisor",
+        "Filial Rahbari": "filial_rahbari",
+        "Distribyutor":   "distribyutor",
+    }.get(lavozim, (lavozim or "unknown").lower())
+
+
+def _role_kb(lavozim: str):
+    if lavozim == "Agent":
+        return agent_kb()
+    if lavozim == "Filial Rahbari":
+        return filial_rahbari_kb()
+    return supervisor_kb()
+
+
+def _elapsed(sana_str: str) -> str:
+    try:
+        created = datetime.strptime(sana_str, "%Y-%m-%d %H:%M:%S")
+        diff = datetime.now() - created
+        total = int(diff.total_seconds())
+        h, m = divmod(total // 60, 60)
+        return f"{h} soat {m} daqiqa" if h else f"{m} daqiqa"
+    except Exception:
+        return "—"
+
+
+async def _resolve_group(uid: int, lavozim: str) -> tuple:
+    """Return (supervisor_id, group_chat_id) for the given user."""
+    if lavozim == "Agent":
+        sup_id = await db.get_biriktirish(uid)
+        group  = await db.get_supervisor_group(sup_id) if sup_id else None
+        return sup_id, group
+    if lavozim in ("Supervisor", "Filial Rahbari"):
+        return None, await db.get_supervisor_group(uid)
+    return None, None
+
+
+async def _send_media(context, chat_id: int, media_ref: str):
+    """Send a stored file (format: 'type:file_id') to chat_id."""
+    if not media_ref or ":" not in media_ref:
+        return
+    media_type, file_id = media_ref.split(":", 1)
+    try:
+        if media_type == "photo":
+            await context.bot.send_photo(chat_id=chat_id, photo=file_id)
+        elif media_type == "document":
+            await context.bot.send_document(chat_id=chat_id, document=file_id)
+        elif media_type == "video":
+            await context.bot.send_video(chat_id=chat_id, video=file_id)
+        elif media_type == "voice":
+            await context.bot.send_voice(chat_id=chat_id, voice=file_id)
+    except Exception as e:
+        logger.warning(f"Media yuborishda xato ({media_type}): {e}")
+
+
+# ══════════════════════════════════════════════
+# CARD BUILDERS  (all return MarkdownV2 text)
+# ══════════════════════════════════════════════
+
+def _card_lokatsiya(ism: str, dokon: str, lat, lon, sorov_id: int) -> str:
+    map_link = f"https://maps.google.com/?q={lat},{lon}"
+    return (
+        f"📍 *Lokatsiya o'zgartirish*\n"
+        f"👤 Agent: {em(ism)}\n"
+        f"🏪 Dokon: {em(dokon)}\n"
+        f"📌 Lokatsiya: [Google Maps]({map_link})\n"
+        f"🆔 So'rov \\#{sorov_id}"
+    )
+
+
+def _card_telefon(ism: str, dokon: str, phone: str, sorov_id: int) -> str:
+    return (
+        f"📞 *Raqam o'zgartirish*\n"
+        f"👤 Agent: {em(ism)}\n"
+        f"🏪 Dokon: {em(dokon)}\n"
+        f"📱 Raqam: `{em(phone)}`\n"
+        f"🆔 So'rov \\#{sorov_id}"
+    )
+
+
+def _card_vizit(ism: str, izoh: str, sorov_id: int) -> str:
+    return (
+        f"🖼 *Vizitda muammo*\n"
+        f"👤 Agent: {em(ism)}\n"
+        f"💬 Izoh: {em(izoh)}\n"
+        f"🆔 So'rov \\#{sorov_id}"
+    )
+
+
+def _card_boshqa(ism: str, text: str, sorov_id: int) -> str:
+    content_line = f"📝 {em(text[:500])}\n" if text else ""
+    return (
+        f"💬 *Boshqa muammo*\n"
+        f"👤 Agent: {em(ism)}\n"
+        f"{content_line}"
+        f"🆔 So'rov \\#{sorov_id}"
+    )
+
+
+def _card_limit(ism: str, dokon: str, limit_val: str, sorov_id: int) -> str:
+    try:
+        formatted = f"{int(limit_val):,}"
+    except Exception:
+        formatted = limit_val
+    return (
+        f"💰 *Limit qo'shish*\n"
+        f"👤 Filial Rahbari: {em(ism)}\n"
+        f"🏪 Dokon: {em(dokon)}\n"
+        f"💵 Yangi limit: *{em(formatted)}* so'm\n"
+        f"🆔 So'rov \\#{sorov_id}"
+    )
+
+
+def _build_card(sorov: tuple) -> str:
+    """Build a card from a sorovlar DB row (used in approval callback)."""
+    # cols: id[0] agent_id[1] agent_ism[2] tur[3] dokon_nomi[4] yangi_qiymat[5]
+    #       lat[6] lon[7] foto_ids[8] izoh[9] status[10] supervisor_id[11]
+    #       sup_msg_id[12] admin_msg_id[13] sana[14] group_id[15]
+    ism   = sorov[2]
+    tur   = sorov[3]
+    dokon = sorov[4] or "—"
+    qiymat = sorov[5] or "—"
+    lat, lon = sorov[6], sorov[7]
+    izoh  = sorov[9] or "—"
+    sid   = sorov[0]
+
+    if tur == "lokatsiya":
+        return _card_lokatsiya(ism, dokon, lat, lon, sid)
+    if tur == "telefon":
+        return _card_telefon(ism, dokon, qiymat, sid)
+    if tur == "vizit":
+        return _card_vizit(ism, izoh, sid)
+    if tur == "limit":
+        return _card_limit(ism, dokon, qiymat, sid)
+    return _card_boshqa(ism, izoh, sid)
+
+
+# ══════════════════════════════════════════════
+# SEND TO SUPERVISOR (with approval buttons)
+# ══════════════════════════════════════════════
+
+async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
+                               ism: str, supervisor_id: int):
+    tur   = sorov_data.get("tur", "")
+    dokon = sorov_data.get("dokon_nomi", "—")
+
+    if tur == "lokatsiya":
+        card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id)
+    elif tur == "telefon":
+        card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id)
+    elif tur == "vizit":
+        card = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id)
+        # Send photos to supervisor first so they can see them before approving
+        foto_ids = sorov_data.get("fotolar", [])
+        if foto_ids:
+            try:
+                media = [InputMediaPhoto(fid) for fid in foto_ids]
+                await context.bot.send_media_group(chat_id=supervisor_id, media=media)
+            except Exception as e:
+                logger.warning(f"Vizit rasmlari supervisorga yuborishda xato: {e}")
+    else:  # boshqa
+        card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id)
+        media_ref = sorov_data.get("media_ref")
+        if media_ref:
+            await _send_media(context, supervisor_id, media_ref)
+
+    try:
+        sent = await context.bot.send_message(
+            chat_id=supervisor_id,
+            text=card,
+            parse_mode="MarkdownV2",
+            reply_markup=sorov_tasdiqlash_kb(sorov_id),
+            disable_web_page_preview=True,
+        )
+        await db.update_sorov_sup_msg_id(sorov_id, sent.message_id)
+    except Exception as e:
+        logger.warning(f"Supervisor ga sorov yuborishda xato: {e}")
+
+
+# ══════════════════════════════════════════════
+# POST TO GROUP (final delivery, no buttons)
+# ══════════════════════════════════════════════
+
+async def _post_to_group(context, sorov_id: int, sorov_data: dict,
+                          ism: str, group_chat_id: int):
+    tur   = sorov_data.get("tur", "")
+    dokon = sorov_data.get("dokon_nomi", "—")
+
+    if tur == "lokatsiya":
+        card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id)
+        await context.bot.send_message(
+            chat_id=group_chat_id, text=card,
+            parse_mode="MarkdownV2", disable_web_page_preview=True,
+        )
+    elif tur == "telefon":
+        card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id)
+        await context.bot.send_message(
+            chat_id=group_chat_id, text=card,
+            parse_mode="MarkdownV2", disable_web_page_preview=True,
+        )
+    elif tur == "vizit":
+        caption = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id)
+        foto_ids = sorov_data.get("fotolar", [])
+        if foto_ids:
+            media = [InputMediaPhoto(fid) for fid in foto_ids[:-1]]
+            media.append(InputMediaPhoto(foto_ids[-1], caption=caption, parse_mode="MarkdownV2"))
+            await context.bot.send_media_group(chat_id=group_chat_id, media=media)
+        else:
+            await context.bot.send_message(
+                chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2",
+            )
+    else:  # boshqa
+        card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id)
+        await context.bot.send_message(
+            chat_id=group_chat_id, text=card, parse_mode="MarkdownV2",
+        )
+        media_ref = sorov_data.get("media_ref") or sorov_data.get("yangi_qiymat")
+        if media_ref:
+            await _send_media(context, group_chat_id, media_ref)
+
+    await db.update_sorov_group_id(sorov_id, group_chat_id)
+
+
+async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int):
+    """Post to group using a sorovlar DB row (used in approval callback)."""
+    tur      = sorov[3]
+    ism      = sorov[2]
+    dokon    = sorov[4] or "—"
+    qiymat   = sorov[5] or "—"
+    lat, lon = sorov[6], sorov[7]
+    izoh     = sorov[9] or "—"
+    sorov_id = sorov[0]
+
+    if tur == "lokatsiya":
+        card = _card_lokatsiya(ism, dokon, lat, lon, sorov_id)
+        await context.bot.send_message(
+            chat_id=group_chat_id, text=card,
+            parse_mode="MarkdownV2", disable_web_page_preview=True,
+        )
+    elif tur == "telefon":
+        card = _card_telefon(ism, dokon, qiymat, sorov_id)
+        await context.bot.send_message(
+            chat_id=group_chat_id, text=card,
+            parse_mode="MarkdownV2", disable_web_page_preview=True,
+        )
+    elif tur == "vizit":
+        caption = _card_vizit(ism, izoh, sorov_id)
+        foto_ids = json.loads(sorov[8]) if sorov[8] else []
+        if foto_ids:
+            media = [InputMediaPhoto(fid) for fid in foto_ids[:-1]]
+            media.append(InputMediaPhoto(foto_ids[-1], caption=caption, parse_mode="MarkdownV2"))
+            await context.bot.send_media_group(chat_id=group_chat_id, media=media)
+        else:
+            await context.bot.send_message(
+                chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2",
+            )
+    else:  # boshqa / limit
+        card = _build_card(sorov)
+        await context.bot.send_message(
+            chat_id=group_chat_id, text=card, parse_mode="MarkdownV2",
+        )
+        if tur == "boshqa" and qiymat and ":" in qiymat:
+            await _send_media(context, group_chat_id, qiymat)
+
+    await db.update_sorov_group_id(sorov_id, group_chat_id)
+
+
+# ══════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════
+
+async def sorov_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    user = await db.get_xodim(uid)
+    if not user or user[0] != "approved":
+        return ConversationHandler.END
+
+    lavozim = user[3]
+    context.user_data["sorov_data"] = {"agent_ism": user[2], "lavozim": lavozim}
+
+    if lavozim == "Supervisor":
+        return await _enter_batch_mode(update, context)
+
+    # Agent / Filial Rahbari — all 4 types
+    await update.message.reply_text(
+        "❓ *Savol turini tanlang:*",
+        parse_mode="Markdown",
+        reply_markup=sorov_tur_kb(),
+    )
+    return SOROV_TUR
+
+
+# ══════════════════════════════════════════════
+# TYPE SELECTION
+# ══════════════════════════════════════════════
+
+async def sorov_tur_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    tur = query.data[len("sorov_tur_"):]  # lokatsiya | telefon | vizit | boshqa
+
+    context.user_data["sorov_data"]["tur"] = tur
+
+    if tur in ("lokatsiya", "telefon"):
+        await query.edit_message_text(
+            "🏪 *Dokon nomini yoki kodini yozing:*",
+            parse_mode="Markdown",
+        )
+        return SOROV_DOKON
+
+    if tur == "vizit":
+        await query.edit_message_text(
+            "🖼 *Vizitda muammo*\n\nKamida 3 ta rasm yuboring "
+            "(do'kon nomi va vizitda qo'shilgan bo'limlar ko'rinsin):",
+            parse_mode="Markdown",
+        )
+        context.user_data["sorov_data"]["fotolar"] = []
+        return SOROV_FOTO
+
+    # boshqa → batch mode
+    await query.edit_message_text("💬 *Boshqa muammo*", parse_mode="Markdown")
+    return await _enter_batch_mode(update, context)
+
+
+# ══════════════════════════════════════════════
+# STORE NAME
+# ══════════════════════════════════════════════
+
+async def sorov_dokon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["sorov_data"]["dokon_nomi"] = update.message.text.strip()
+    tur = context.user_data["sorov_data"]["tur"]
+
+    if tur == "lokatsiya":
+        await update.message.reply_text(
+            "📍 *Dokon yangi lokatsiyasini yuboring:*\n"
+            "_Faqat Telegram lokatsiya (GPS) qabul qilinadi._",
+            parse_mode="Markdown",
+        )
+        return SOROV_LOK
+
+    await update.message.reply_text(
+        "📞 *Yangi raqamni yozing:*\n"
+        "_Masalan: 901234567 yoki +998901234567_",
+        parse_mode="Markdown",
+    )
+    return SOROV_TEL
+
+
+# ══════════════════════════════════════════════
+# LOCATION (GPS only)
+# ══════════════════════════════════════════════
+
+async def sorov_lok_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.location:
+        await update.message.reply_text(
+            "❌ Faqat Telegram lokatsiya qabul qilinadi.\n"
+            "📎 Qo'shimcha → Lokatsiya tugmasini bosing."
+        )
+        return SOROV_LOK
+
+    loc = update.message.location
+    context.user_data["sorov_data"]["lat"] = loc.latitude
+    context.user_data["sorov_data"]["lon"] = loc.longitude
+    await _finish_sorov(update, context)
+    return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════
+# PHONE (auto-formatted)
+# ══════════════════════════════════════════════
+
+def _format_phone(raw: str) -> str | None:
+    digits = "".join(filter(str.isdigit, raw))
+    if not digits:
+        return None
+    if digits.startswith("998"):
+        digits = digits[3:]
+    elif digits.startswith("8") and len(digits) == 10:
+        digits = digits[1:]
+    elif digits.startswith("0"):
+        digits = digits[1:]
+    if len(digits) != 9:
+        return None
+    return f"+998{digits}"
+
+
+async def sorov_tel_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        await update.message.reply_text(
+            "❌ Telefon raqamini yozing:\n_Masalan: 901234567_",
+            parse_mode="Markdown",
+        )
+        return SOROV_TEL
+    phone = _format_phone(update.message.text.strip())
+    if not phone:
+        await update.message.reply_text(
+            "❌ Noto'g'ri raqam. Quyidagilardan birini kiriting:\n"
+            "• 901234567\n• 0901234567\n• 998901234567\n• +998901234567\n\nQayta kiriting:"
+        )
+        return SOROV_TEL
+    context.user_data["sorov_data"]["yangi_qiymat"] = phone
+    await _finish_sorov(update, context)
+    return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════
+# PHOTOS (collect ≥3)
+# ══════════════════════════════════════════════
+
+async def sorov_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("❌ Iltimos, rasm yuboring.")
+        return SOROV_FOTO
+
+    fotolar = context.user_data["sorov_data"].setdefault("fotolar", [])
+    fotolar.append(update.message.photo[-1].file_id)
+    count = len(fotolar)
+
+    if count < 3:
+        remaining = 3 - count
+        await update.message.reply_text(
+            f"✅ {count} ta rasm qabul qilindi. Yana {remaining} ta yuboring."
+        )
+        return SOROV_FOTO
+
+    await update.message.reply_text(
+        f"✅ {count} ta rasm qabul qilindi!\n\n"
+        "📝 *Muammo haqida batafsil izoh yozing:*",
+        parse_mode="Markdown",
+    )
+    return SOROV_IZOH
+
+
+# ══════════════════════════════════════════════
+# DESCRIPTION (vizit)
+# ══════════════════════════════════════════════
+
+async def sorov_izoh_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["sorov_data"]["izoh"] = update.message.text.strip()
+    await _finish_sorov(update, context)
+    return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════
+# BATCH MODE — collect, preview, submit
+# ══════════════════════════════════════════════
+
+def _cancel_batch_timer(context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
+    for job in context.job_queue.get_jobs_by_name(f"batch_{uid}"):
+        job.schedule_removal()
+
+
+def _reschedule_batch_timer(context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
+    _cancel_batch_timer(context, uid)
+    context.job_queue.run_once(
+        _batch_auto_submit_job,
+        when=BATCH_TIMEOUT_SEC,
+        data={"uid": uid},
+        name=f"batch_{uid}",
+        chat_id=uid,
+        user_id=uid,
+    )
+
+
+async def _batch_auto_submit_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Auto-submits batch after 3 minutes of inactivity."""
+    uid: int = context.job.data["uid"]
+    user_data = context.application.user_data.get(uid, {})
+    batch = user_data.get("batch", {})
+    sorov_data = user_data.get("sorov_data", {})
+
+    total = sum(len(batch.get(k, [])) for k in ("messages", "photos", "files", "voices", "videos"))
+    if total == 0:
+        return
+
+    lavozim = sorov_data.get("lavozim", "Agent")
+    success = await _do_submit_batch(uid, user_data, context)
+
+    try:
+        msg_text = (
+            "⏱ *3 daqiqa o'tdi\\.* Muammoyingiz avtomatik yuborildi\\!"
+            if success else
+            "⚠️ Avtomatik yuborishda xato\\. Admin bilan bog'laning\\."
+        )
+        await context.bot.send_message(
+            chat_id=uid,
+            text=msg_text,
+            parse_mode="MarkdownV2",
+            reply_markup=_role_kb(lavozim),
+        )
+    except Exception as e:
+        logger.warning(f"Auto-submit bildirishnomasi yuborishda xato: {e}")
+
+    user_data.pop("batch", None)
+    user_data.pop("sorov_data", None)
+
+
+async def _enter_batch_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    context.user_data["batch"] = {
+        "messages": [], "photos": [], "files": [], "voices": [], "videos": []
+    }
+    _reschedule_batch_timer(context, uid)
+    await context.bot.send_message(
+        chat_id=uid,
+        text=(
+            "📩 *Muammo yozish rejimi*\n\n"
+            "Xabar, rasm yoki fayl yuboring\\.\n"
+            "Tayyor bo'lgach *'📤 Yuborish'* tugmasini bosing\\.\n"
+            "⏱ _3 daqiqa faolsiz bo'lsangiz, avtomatik yuboriladi\\._"
+        ),
+        parse_mode="MarkdownV2",
+        reply_markup=batch_collect_kb(),
+    )
+    return SOROV_BATCH_COLLECT
+
+
+async def batch_collect_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Accepts all incoming content in collection mode."""
+    msg = update.message
+    uid = update.effective_user.id
+
+    if msg.text and msg.text.strip() == "📤 Yuborish":
+        return await _show_batch_preview(update, context)
+
+    batch = context.user_data.setdefault("batch", {
+        "messages": [], "photos": [], "files": [], "voices": [], "videos": []
+    })
+
+    text = (msg.text or msg.caption or "").strip()
+    if text:
+        batch["messages"].append(text)
+    if msg.photo:
+        batch["photos"].append(msg.photo[-1].file_id)
+    if msg.document:
+        batch["files"].append({"file_id": msg.document.file_id, "name": msg.document.file_name or "fayl"})
+    if msg.voice:
+        batch["voices"].append(msg.voice.file_id)
+    if msg.video:
+        batch["videos"].append(msg.video.file_id)
+
+    _reschedule_batch_timer(context, uid)
+
+    counts = []
+    if batch["messages"]: counts.append(f"💬 {len(batch['messages'])}")
+    if batch["photos"]:   counts.append(f"🖼 {len(batch['photos'])}")
+    if batch["files"]:    counts.append(f"📎 {len(batch['files'])}")
+    if batch["voices"]:   counts.append(f"🎙 {len(batch['voices'])}")
+    if batch["videos"]:   counts.append(f"🎥 {len(batch['videos'])}")
+
+    await msg.reply_text(
+        f"✅ Qabul qilindi \\({', '.join(counts) or '0'}\\)\n"
+        f"_Tayyor bo'lgach '📤 Yuborish' bosing\\._",
+        parse_mode="MarkdownV2",
+        reply_markup=batch_collect_kb(),
+    )
+    return SOROV_BATCH_COLLECT
+
+
+async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    batch = context.user_data.get("batch", {})
+    messages = batch.get("messages", [])
+    photos   = batch.get("photos", [])
+    files    = batch.get("files", [])
+    voices   = batch.get("voices", [])
+    videos   = batch.get("videos", [])
+
+    total = len(messages) + len(photos) + len(files) + len(voices) + len(videos)
+    if total == 0:
+        await update.message.reply_text(
+            "❌ Hali hech narsa yuborilmagan\\. Xabar, rasm yoki fayl yuboring\\.",
+            parse_mode="MarkdownV2",
+            reply_markup=batch_collect_kb(),
+        )
+        return SOROV_BATCH_COLLECT
+
+    text = "📋 *Yuborish oldidan tekshiring:*\n\n"
+    if messages: text += f"💬 Xabarlar: *{len(messages)}* ta\n"
+    if photos:   text += f"🖼 Rasmlar: *{len(photos)}* ta\n"
+    if files:    text += f"📎 Fayllar: *{len(files)}* ta\n"
+    if voices:   text += f"🎙 Ovozli: *{len(voices)}* ta\n"
+    if videos:   text += f"🎥 Video: *{len(videos)}* ta\n"
+
+    if messages:
+        text += "\n"
+        for m in messages[:3]:
+            short = m[:150] + ("\\.\\.\\." if len(m) > 150 else "")
+            text += f"\n💬 _{em(short)}_"
+        if len(messages) > 3:
+            text += f"\n_\\.\\.\\. va yana {len(messages) - 3} ta xabar_"
+
+    await update.message.reply_text(
+        text,
+        parse_mode="MarkdownV2",
+        reply_markup=batch_preview_kb(),
+    )
+    return SOROV_BATCH_PREVIEW
+
+
+async def batch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handles confirm / edit / cancel from preview screen."""
+    query = update.callback_query
+    await query.answer()
+    uid    = query.from_user.id
+    action = query.data
+    data   = context.user_data.get("sorov_data", {})
+    lavozim = data.get("lavozim", "Agent")
+
+    if action == "batch_confirm":
+        await query.edit_message_text("⏳ Yuborilmoqda\\.\\.\\.", parse_mode="MarkdownV2")
+        success = await _do_submit_batch(uid, context.user_data, context)
+        _cancel_batch_timer(context, uid)
+        context.user_data.pop("batch", None)
+        context.user_data.pop("sorov_data", None)
+        reply_text = "✅ Muammoyingiz yuborildi\\!" if success else "❌ Guruh belgilanmagan\\. Admin bilan bog'laning\\."
+        await query.edit_message_text(reply_text, parse_mode="MarkdownV2")
+        try:
+            await context.bot.send_message(chat_id=uid, text=".", reply_markup=_role_kb(lavozim))
+        except Exception:
+            pass
+        return ConversationHandler.END
+
+    if action == "batch_edit":
+        await query.edit_message_text("✏️ Davom eting\\, yana xabar yoki rasm yuboring\\.", parse_mode="MarkdownV2")
+        await context.bot.send_message(chat_id=uid, text="📝 Yana qo'shing:", reply_markup=batch_collect_kb())
+        _reschedule_batch_timer(context, uid)
+        return SOROV_BATCH_COLLECT
+
+    if action == "batch_cancel":
+        _cancel_batch_timer(context, uid)
+        context.user_data.pop("batch", None)
+        context.user_data.pop("sorov_data", None)
+        await query.edit_message_text("❌ Bekor qilindi\\.", parse_mode="MarkdownV2")
+        try:
+            await context.bot.send_message(chat_id=uid, text="Bosh menyu:", reply_markup=_role_kb(lavozim))
+        except Exception:
+            pass
+        return ConversationHandler.END
+
+    return SOROV_BATCH_PREVIEW
+
+
+async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Core submission logic shared by manual confirm and auto-timer."""
+    batch     = user_data.get("batch", {})
+    sorov_data = user_data.get("sorov_data", {})
+
+    messages = batch.get("messages", [])
+    photos   = batch.get("photos", [])
+    files    = batch.get("files", [])
+    voices   = batch.get("voices", [])
+    videos   = batch.get("videos", [])
+    ism      = sorov_data.get("agent_ism", "")
+    lavozim  = sorov_data.get("lavozim", "")
+
+    combined_text = "\n".join(messages)
+    all_media_json = json.dumps({"files": files, "voices": voices, "videos": videos}) if (files or voices or videos) else None
+
+    supervisor_id, group_chat_id = await _resolve_group(uid, lavozim)
+
+    sorov_id = await db.insert_sorov(
+        agent_id=uid, agent_ism=ism, tur="boshqa",
+        dokon_nomi=None, yangi_qiymat=all_media_json,
+        lat=None, lon=None,
+        foto_ids=json.dumps(photos) if photos else None,
+        izoh=combined_text,
+        supervisor_id=supervisor_id,
+    )
+
+    # Build card
+    now_str = datetime.now().strftime("%d\\.%m\\.%Y %H:%M")
+    role_label = "Agent" if lavozim == "Agent" else em(lavozim)
+    card_lines = [
+        f"💬 *Boshqa muammo*",
+        f"👤 {role_label}: {em(ism)}",
+        f"🕐 {now_str}",
+    ]
+    if messages:
+        card_lines.append("\n📝 *Xabarlar:*")
+        for m in messages:
+            card_lines.append(em(m[:500]))
+    card_lines.append(f"\n🆔 So'rov \\#{sorov_id}")
+    card = "\n".join(card_lines)
+
+    async def _send_photos_and_media(chat_id: int) -> None:
+        if photos:
+            from telegram import InputMediaPhoto as _IMP
+            try:
+                await context.bot.send_media_group(chat_id=chat_id, media=[_IMP(fid) for fid in photos])
+            except Exception as e:
+                logger.warning(f"Media group yuborishda xato: {e}")
+        for f_info in files:
+            fid = f_info["file_id"] if isinstance(f_info, dict) else f_info
+            try:
+                await context.bot.send_document(chat_id=chat_id, document=fid)
+            except Exception as e:
+                logger.warning(f"Fayl yuborishda xato: {e}")
+        for fid in voices:
+            try:
+                await context.bot.send_voice(chat_id=chat_id, voice=fid)
+            except Exception as e:
+                logger.warning(f"Ovoz yuborishda xato: {e}")
+        for fid in videos:
+            try:
+                await context.bot.send_video(chat_id=chat_id, video=fid)
+            except Exception as e:
+                logger.warning(f"Video yuborishda xato: {e}")
+
+    sent_ok = False
+    try:
+        if lavozim == "Agent" and supervisor_id:
+            sent = await context.bot.send_message(
+                chat_id=supervisor_id, text=card,
+                parse_mode="MarkdownV2",
+                reply_markup=sorov_tasdiqlash_kb(sorov_id),
+            )
+            await db.update_sorov_sup_msg_id(sorov_id, sent.message_id)
+            await _send_photos_and_media(supervisor_id)
+            sent_ok = True
+        elif group_chat_id:
+            await context.bot.send_message(chat_id=group_chat_id, text=card, parse_mode="MarkdownV2")
+            await _send_photos_and_media(group_chat_id)
+            await db.update_sorov_group_id(sorov_id, group_chat_id)
+            sent_ok = True
+    except Exception as e:
+        logger.error(f"Batch yuborishda xato (uid={uid}): {e}")
+
+    # Audit log
+    try:
+        await db.insert_audit_log(
+            user_id=uid,
+            user_role=_lavozim_to_role(lavozim),
+            action_type="boshqa_muammo",
+            target=None,
+            old_value=None,
+            new_value=combined_text[:500] if combined_text else None,
+            status="pending" if lavozim == "Agent" and supervisor_id else "approved",
+            request_id=sorov_id,
+        )
+    except Exception as _e:
+        logger.warning(f"Audit log yozishda xato (batch): {_e}")
+
+    return sent_ok
+
+
+# ══════════════════════════════════════════════
+# FINISH  (lokatsiya / telefon / vizit)
+# Agent   → Supervisor for approval
+# FR      → Group directly
+# ══════════════════════════════════════════════
+
+async def _finish_sorov(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    data = context.user_data.get("sorov_data", {})
+    ism = data.get("agent_ism", "")
+    lavozim = data.get("lavozim", "")
+    tur = data.get("tur", "")
+
+    foto_ids_json = json.dumps(data.get("fotolar", [])) if data.get("fotolar") else None
+    supervisor_id, group_chat_id = await _resolve_group(uid, lavozim)
+
+    sorov_id = await db.insert_sorov(
+        agent_id=uid,
+        agent_ism=ism,
+        tur=tur,
+        dokon_nomi=data.get("dokon_nomi"),
+        yangi_qiymat=data.get("yangi_qiymat"),
+        lat=data.get("lat"),
+        lon=data.get("lon"),
+        foto_ids=foto_ids_json,
+        izoh=data.get("izoh"),
+        supervisor_id=supervisor_id,
+    )
+
+    # ── Audit log ────────────────────────────────────────────────
+    _TUR_ACTION = {
+        "lokatsiya": "lokatsiya_ozgartirish",
+        "telefon":   "raqam_ozgartirish",
+        "vizit":     "vizit_muammo",
+        "boshqa":    "boshqa_muammo",
+    }
+    _new_val = (
+        f"{data.get('lat')}, {data.get('lon')}" if tur == "lokatsiya"
+        else data.get("yangi_qiymat") if tur == "telefon"
+        else (data.get("izoh") or "")[:500]
+    )
+    try:
+        await db.insert_audit_log(
+            user_id=uid,
+            user_role=_lavozim_to_role(lavozim),
+            action_type=_TUR_ACTION.get(tur, tur),
+            target=data.get("dokon_nomi") or "—",
+            old_value=None,
+            new_value=_new_val,
+            status="pending" if lavozim == "Agent" and supervisor_id else "approved",
+            request_id=sorov_id,
+        )
+    except Exception as _e:
+        logger.warning(f"Audit log yozishda xato (_finish_sorov): {_e}")
+    # ─────────────────────────────────────────────────────────────
+
+    sent_ok = False
+    if lavozim == "Agent":
+        if supervisor_id:
+            await _send_to_supervisor(context, sorov_id, data, ism, supervisor_id)
+            sent_ok = True
+        elif group_chat_id:
+            await _post_to_group(context, sorov_id, data, ism, group_chat_id)
+            sent_ok = True
+    else:  # FR
+        if group_chat_id:
+            await _post_to_group(context, sorov_id, data, ism, group_chat_id)
+            sent_ok = True
+
+    if sent_ok:
+        await update.message.reply_text("✅ So'rovingiz yuborildi.", reply_markup=_role_kb(lavozim))
+    else:
+        await update.message.reply_text(
+            "❌ Guruh belgilanmagan. Admin bilan bog'laning.",
+            reply_markup=_role_kb(lavozim),
+        )
+    context.user_data.pop("sorov_data", None)
+
+
+# ══════════════════════════════════════════════
+# SUPERVISOR APPROVE / REJECT CALLBACK
+# ✅ → post card to supervisor's group
+# ❌ → notify agent
+# ══════════════════════════════════════════════
+
+async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action, sorov_id_str = query.data.rsplit("_", 1)
+    sorov_id = int(sorov_id_str)
+
+    sorov = await db.get_sorov(sorov_id)
+    if not sorov:
+        await query.edit_message_text("❌ So'rov topilmadi.")
+        return
+
+    # cols: id[0] agent_id[1] agent_ism[2] tur[3] dokon_nomi[4] yangi_qiymat[5]
+    #       lat[6] lon[7] foto_ids[8] izoh[9] status[10] supervisor_id[11]
+    #       sup_msg_id[12] admin_msg_id[13] sana[14] group_id[15]
+    agent_id  = sorov[1]
+    tur       = sorov[3]
+    dokon     = sorov[4] or "—"
+    sana      = sorov[14]
+    sup_uid   = update.effective_user.id
+
+    sup_row = await db.get_xodim(sup_uid)
+    sup_role = _lavozim_to_role(sup_row[3]) if sup_row else "supervisor"
+
+    if action == "sorov_appr":
+        await db.update_sorov_status(sorov_id, "approved")
+
+        try:
+            await db.insert_audit_log(
+                user_id=sup_uid,
+                user_role=sup_role,
+                action_type="supervisor_tasdiqlash",
+                target=dokon,
+                old_value=None,
+                new_value=None,
+                status="approved",
+                request_id=sorov_id,
+            )
+        except Exception as _e:
+            logger.warning(f"Audit log yozishda xato (sorov_appr): {_e}")
+
+        group_chat_id = await db.get_supervisor_group(sup_uid)
+        logger.info(f"[APPR] sorov_id={sorov_id} sup_uid={sup_uid} group_chat_id={group_chat_id}")
+
+        if group_chat_id:
+            try:
+                await _post_to_group_from_db(context, sorov, group_chat_id)
+                await query.edit_message_text(
+                    f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
+                    f"📤 Guruhga yuborildi: `{group_chat_id}`",
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                err = str(e)
+                logger.error(f"[APPR] Guruhga yuborishda xato group={group_chat_id}: {err}")
+                await query.edit_message_text(
+                    f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
+                    f"⚠️ Guruhga yuborishda xato: {err}\n"
+                    f"Group ID: `{group_chat_id}`",
+                    parse_mode="Markdown",
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"⚠️ Guruhga yuborishda xato\\!\n"
+                             f"So'rov: \\#{sorov_id}\n"
+                             f"Group: `{group_chat_id}`\n"
+                             f"Xato: {em(err)}",
+                        parse_mode="MarkdownV2",
+                    )
+                except Exception:
+                    pass
+        else:
+            logger.warning(f"[APPR] Guruh topilmadi sup_uid={sup_uid}")
+            await query.edit_message_text(
+                f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
+                f"⚠️ Guruh belgilanmagan! Admin paneldan 'Guruh belgilash' tugmasini bosing.\n"
+                f"Supervisor ID: `{sup_uid}`",
+                parse_mode="Markdown",
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=f"⚠️ Supervisor uchun guruh belgilanmagan\\!\n"
+                         f"So'rov: \\#{sorov_id}\n"
+                         f"Supervisor ID: `{sup_uid}`\n"
+                         f"_Xodim profilidan 'Guruh belgilash' tugmasini bosing\\._",
+                    parse_mode="MarkdownV2",
+                )
+            except Exception:
+                pass
+
+        elapsed = _elapsed(sana)
+        try:
+            await context.bot.send_message(
+                chat_id=agent_id,
+                text=f"✅ So'rovingiz tasdiqlandi\\.\n⏱ Vaqt: {elapsed}",
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            pass
+
+    else:  # sorov_rej
+        await db.update_sorov_status(sorov_id, "rejected")
+
+        try:
+            await db.insert_audit_log(
+                user_id=sup_uid,
+                user_role=sup_role,
+                action_type="supervisor_rad",
+                target=dokon,
+                old_value=None,
+                new_value=None,
+                status="rejected",
+                request_id=sorov_id,
+            )
+        except Exception as _e:
+            logger.warning(f"Audit log yozishda xato (sorov_rej): {_e}")
+
+        await query.edit_message_text(f"❌ So'rov #{sorov_id} rad etildi.")
+        elapsed = _elapsed(sana)
+        try:
+            await context.bot.send_message(
+                chat_id=agent_id,
+                text=f"❌ So'rovingiz rad etildi\\.\n"
+                     f"🏪 Dokon: {em(dokon)}\n"
+                     f"⏱ Vaqt: {elapsed}",
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════
+# LIMIT QO'SHISH (Filial Rahbari)
+# FR submits → directly to FR's group (no admin step)
+# ══════════════════════════════════════════════
+
+async def limit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    user = await db.get_xodim(uid)
+    if not user or user[0] != "approved" or user[3] != "Filial Rahbari":
+        return ConversationHandler.END
+
+    context.user_data["limit_data"] = {"ism": user[2]}
+    await update.message.reply_text(
+        "🏪 *Limit qo'shish*\n\nDokon nomini yoki kodini yozing:",
+        parse_mode="Markdown",
+        reply_markup=remove_kb(),
+    )
+    return LIMIT_DOKON
+
+
+async def limit_dokon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["limit_data"]["dokon_nomi"] = update.message.text.strip()
+    await update.message.reply_text(
+        "💰 Yangi limitni yozing *(son, masalan: 5000000)*:",
+        parse_mode="Markdown",
+    )
+    return LIMIT_SUMMA
+
+
+async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = update.message.text.strip().replace(" ", "").replace(",", "")
+    if not raw.isdigit():
+        await update.message.reply_text("❌ Faqat son kiriting. Masalan: 5000000\nQayta kiriting:")
+        return LIMIT_SUMMA
+
+    data  = context.user_data.get("limit_data", {})
+    dokon = data.get("dokon_nomi", "—")
+    ism   = data.get("ism", "—")
+    uid   = update.effective_user.id
+
+    sorov_id = await db.insert_sorov(
+        agent_id=uid, agent_ism=ism, tur="limit",
+        dokon_nomi=dokon, yangi_qiymat=raw,
+        lat=None, lon=None, foto_ids=None, izoh=None,
+        supervisor_id=None,
+    )
+
+    try:
+        await db.insert_audit_log(
+            user_id=uid,
+            user_role="filial_rahbari",
+            action_type="limit_qoshish",
+            target=dokon,
+            old_value=None,
+            new_value=raw,
+            status="approved",
+            request_id=sorov_id,
+        )
+    except Exception as _e:
+        logger.warning(f"Audit log yozishda xato (limit): {_e}")
+
+    group_chat_id = await db.get_supervisor_group(uid)
+    card = _card_limit(ism, dokon, raw, sorov_id)
+
+    if group_chat_id:
+        try:
+            await context.bot.send_message(
+                chat_id=group_chat_id,
+                text=card,
+                parse_mode="MarkdownV2",
+            )
+            await db.update_sorov_group_id(sorov_id, group_chat_id)
+            await update.message.reply_text(
+                "✅ Limit so'rovi guruhga yuborildi.",
+                reply_markup=filial_rahbari_kb(),
+            )
+        except Exception as e:
+            logger.warning(f"Limit guruhga yuborishda xato: {e}")
+            await update.message.reply_text(
+                f"⚠️ Guruhga yuborishda xato: {e}",
+                reply_markup=filial_rahbari_kb(),
+            )
+    else:
+        await update.message.reply_text(
+            "❌ Guruh belgilanmagan. Admin bilan bog'laning.",
+            reply_markup=filial_rahbari_kb(),
+        )
+
+    context.user_data.pop("limit_data", None)
+    return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════
+# /instruksiya
+# ══════════════════════════════════════════════
+
+async def handle_admin_sorov_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Admin xodim so'roviga javob berganda agentga yo'naltiradi. True qaytarsa — ishlov berildi."""
+    msg = update.message
+    if not msg or not msg.reply_to_message:
+        return False
+    sorov = await db.get_sorov_by_admin_msg_id(msg.reply_to_message.message_id)
+    if not sorov:
+        return False
+    agent_id = sorov[1]
+    try:
+        await context.bot.copy_message(
+            chat_id=agent_id,
+            from_chat_id=msg.chat_id,
+            message_id=msg.message_id,
+        )
+    except Exception as e:
+        logger.warning(f"Admin sorov javobini agentga yuborishda xato: {e}")
+    return True
+
+
+async def instruksiya_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    caption = (
+        "📖 *Botdan foydalanish yo'riqnomasi*\n\n"
+        "• Ro'yxatdan o'tish: /start\n"
+        "• Yangi klient qo'shish: 🏪 Yangi Klient\n"
+        "• So'rov yuborish: ❓ So'rov\n"
+        "• Bekor qilish: /cancel"
+    )
+    if INSTRUKSIYA_VIDEO_ID:
+        await update.message.reply_video(
+            video=INSTRUKSIYA_VIDEO_ID,
+            caption=caption,
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            caption + "\n\n_Yo'riqnoma videosi tez orada qo'shiladi._",
+            parse_mode="Markdown",
+        )

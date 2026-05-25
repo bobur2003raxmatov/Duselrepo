@@ -1,9 +1,10 @@
 import logging
 import os
+import re
 from datetime import datetime
 from functools import wraps
 
-from telegram import Update, BotCommand, ReplyParameters, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, BotCommand, ReplyParameters, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.helpers import escape_markdown
@@ -11,20 +12,31 @@ from telegram.helpers import escape_markdown
 import database as db
 from keyboards import (
     lavozim_kb, filial_kb, telefon_kb, telefon2_kb, remove_kb,
-    admin_kb, edit_field_kb, edit_select_kb, xodimlar_page_inline,
+    admin_kb, edit_field_kb, xodimlar_page_inline, xodimlar_edit_page_inline,
     sorov_inline, bajarildi_inline, tasdiq_inline, unblock_inline,
     group_sorov_inline, group_bajarildi_inline,
     search_results_kb, xodim_profil_kb,
     biriktirish_list_kb, biriktir_detail_kb,
     biriktirish_agents_kb, biriktirish_checkers_kb, checker_sorov_kb,
     urgency_kb, stars_kb, filial_filter_kb,
+    reyting_menu_kb, agent_reyting_kb,
     pending_xodimlar_inline, blocked_xodimlar_inline,
-    klient_kategoriya_kb, klient_dokon_turi_kb, klient_vizit_kun_kb,
-    klient_chastota_kb, klient_distributor_kb, klient_agent_kb,
-    klient_brendlar_kb, klient_brendlar_kb_selected, klient_confirm_kb,
+    klient_kategoriya_kb, klient_dokon_turi_kb, klient_confirm_kb,
+    klientlar_search_page_inline,
+    mening_klientlar_kb,
+    agent_kb, supervisor_kb, filial_rahbari_kb,
 )
+
+
+def _role_keyboard(lavozim: str):
+    """Return the correct reply keyboard based on role."""
+    if lavozim == "Agent":
+        return agent_kb()
+    if lavozim == "Filial Rahbari":
+        return filial_rahbari_kb()
+    return supervisor_kb()
 from utils import (
-    is_topic_valid, check_sla_timeout, generate_excel,
+    is_topic_valid, check_sla_timeout, generate_excel, generate_klientlar_excel,
     urgency_timeout_job, checker_timeout_job,
 )
 from config import (
@@ -32,15 +44,14 @@ from config import (
     SLA_TIMEOUT_SEC, GROUP_TIMEOUT_SEC, PAGE_SIZE,
     URGENCY_TIMEOUT_SEC, CHECKER_TIMEOUT_SEC,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
-    EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
+    EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
-    BIRIKTIR_EDIT_FIELD, BIRIKTIR_EDIT_VALUE,
-    DOKON_TURLARI, BRENDLAR_LIST, VIZIT_KUNLARI, CHASTOTA_LIST,
+    BIRIKTIR_EDIT_VALUE,
+    DOKON_TURLARI, DOKON_SLUGLARI, AGENT_KODLAR, AGENT_PREFIX_REGIONS, SUPERVISOR_KODLAR,
     KLIENT_RASM, KLIENT_FIRMA_NOMI, KLIENT_TELEFON1, KLIENT_TELEFON2,
     KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
     KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
-    KLIENT_VIZIT_KUN, KLIENT_CHASTOTA, KLIENT_LIMIT, KLIENT_BRENDLAR,
-    KLIENT_CONFIRM,
+    KLIENT_LIMIT, KLIENT_CONFIRM,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,17 +66,22 @@ def em(text) -> str:
 
 def format_phone(phone_raw: str) -> str:
     """Convert any phone format to +998XXXXXXXXX"""
-    phone = ''.join(filter(str.isdigit, phone_raw))
+    if not phone_raw or not isinstance(phone_raw, str):
+        raise ValueError("Telefon raqami bo'sh yoki noto'g'ri formatda.")
+
+    phone = ''.join(filter(str.isdigit, phone_raw.strip()))
+    if not phone:
+        raise ValueError("Telefon raqamida raqam yo'q.")
 
     if phone.startswith('998'):
         phone = phone[3:]
-    elif phone.startswith('8'):
+    elif phone.startswith('8') and len(phone) == 10:
         phone = phone[1:]
     elif phone.startswith('0'):
         phone = phone[1:]
 
     if len(phone) != 9:
-        raise ValueError(f"Invalid phone: must have 9 digits, got {len(phone)}")
+        raise ValueError(f"Telefon raqami noto'g'ri: 9 ta raqam bo'lishi kerak, {len(phone)} ta topildi.")
 
     return f"+998{phone}"
 
@@ -126,7 +142,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = await db.get_xodim(uid)
     if user:
-        status, topic_id, ism, *_ = user
+        status, topic_id, ism, lavozim, *_ = user
 
         if status == "blocked":
             await update.message.reply_text("❌ Profilingiz ma'muriyat tomonidan bloklangan.")
@@ -144,11 +160,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=remove_kb(),
                 )
                 return ISM
+            kb = _role_keyboard(lavozim)
             await update.message.reply_text(
                 f"✅ Tizim faol, {em(ism)}!\n"
                 "Istalgan topshiriq yoki hisobotingizni to'g'ridan-to'g'ri yuboring.",
                 parse_mode="Markdown",
-                reply_markup=remove_kb(),
+                reply_markup=kb,
             )
             return ConversationHandler.END
 
@@ -208,7 +225,63 @@ async def lavozim_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def kod_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["kod"] = update.message.text.strip().upper()
+    kod = update.message.text.strip().upper()
+    lavozim = context.user_data.get("lavozim", "")
+
+    if lavozim == "Agent":
+        if kod not in AGENT_KODLAR:
+            await update.message.reply_text(
+                "❌ Bu agent kodi tizimda mavjud emas.\n"
+                "Iltimos, to'g'ri agent kodini kiriting:"
+            )
+            return KOD
+        prefix = kod[:2]
+        region = AGENT_PREFIX_REGIONS.get(prefix)
+        if not region:
+            await update.message.reply_text(
+                "❌ Agent kodining prefiksi noto'g'ri.\n"
+                "Iltimos, to'g'ri agent kodini kiriting:"
+            )
+            return KOD
+        context.user_data["kod"] = kod
+        context.user_data["filial"] = region
+        await update.message.reply_text(
+            f"✅ Agent kodi tasdiqlandi: *{kod}*\n"
+            f"📍 Hudud avtomatik tanlandi: *{region}*\n\n"
+            "📱 Telefon raqamingizni quyidagi tugma orqali yuboring:",
+            parse_mode="Markdown",
+            reply_markup=telefon_kb(),
+        )
+        return TELEFON
+
+    if lavozim == "Supervisor":
+        if kod not in SUPERVISOR_KODLAR:
+            await update.message.reply_text(
+                "❌ Bu supervisor kodi tizimda mavjud emas.\n"
+                "Supervisor kodi format: *XX100*\n_(Masalan: AN100, SM100)_\n\nQayta kiriting:",
+                parse_mode="Markdown",
+            )
+            return KOD
+        prefix = kod[:2]
+        region = AGENT_PREFIX_REGIONS.get(prefix)
+        if not region:
+            await update.message.reply_text(
+                "❌ Supervisor kodining prefiksi noto'g'ri.\nQayta kiriting:"
+            )
+            return KOD
+        context.user_data["kod"] = kod
+        context.user_data["filial"] = region
+        await update.message.reply_text(
+            f"✅ Supervisor kodi tasdiqlandi: *{kod}*\n"
+            f"📍 Hudud avtomatik tanlandi: *{region}*\n\n"
+            "📱 Telefon raqamingizni quyidagi tugma orqali yuboring:",
+            parse_mode="Markdown",
+            reply_markup=telefon_kb(),
+        )
+        return TELEFON
+
+    # Boshqa lavozimlar uchun filial qo'lda tanlanadi
+    context.user_data["kod"] = kod
     await update.message.reply_text(
         "🏢 Ishlaydigan *Viloyat / Filialingizni* tanlang:",
         parse_mode="Markdown",
@@ -234,14 +307,20 @@ async def filial_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def telefon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.contact:
-        await update.message.reply_text(
-            "❌ Iltimos, raqam yuborish tugmasini bosing:",
-            reply_markup=telefon_kb(),
-        )
+    msg = update.message
+    if msg.contact:
+        raw = msg.contact.phone_number
+    elif msg.text:
+        raw = msg.text.strip()
+    else:
+        await msg.reply_text("❌ Iltimos, raqam yuborish tugmasini bosing yoki yozing:", reply_markup=telefon_kb())
         return TELEFON
-    context.user_data["telefon1"] = update.message.contact.phone_number
-    await update.message.reply_text(
+    try:
+        context.user_data["telefon1"] = format_phone(raw)
+    except ValueError:
+        await msg.reply_text("❌ Telefon raqami noto'g'ri. Masalan: +998901234567\nQayta kiriting:", reply_markup=telefon_kb())
+        return TELEFON
+    await msg.reply_text(
         "Ikkinchi qo'shimcha telefon raqamingiz bormi?",
         reply_markup=telefon2_kb(),
     )
@@ -313,6 +392,10 @@ async def tugilgan_kun_olish(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or msg.chat.id == GROUP_CHAT_ID or update.effective_user.id == ADMIN_ID:
+        return
+
+    # Skip if user is mid-registration, client-creation, or sorov/limit flow
+    if any(k in context.user_data for k in ("ism", "lavozim", "kod", "filial", "klient_data", "sorov_data", "limit_data")):
         return
 
     uid  = update.effective_user.id
@@ -632,7 +715,33 @@ async def _cb_user_action(query, context, action: str, target_uid: int):
             await context.bot.send_message(
                 chat_id=target_uid,
                 text="🎉 Profilingiz tasdiqlandi! Botdan to'liq foydalanishingiz mumkin.",
+                reply_markup=_role_keyboard(lavozim),
             )
+            # General topic ga yangi xodim xabari
+            full = await db.get_xodim_full(target_uid)
+            if full:
+                # (user_id, ism, lavozim, kod, filial, tel1, tel2, tug_kun, topic_id, status, sana)
+                sana_str = full[10] or "—"
+                xodim_card = (
+                    f"🆕 *Yangi Xodim!*\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"👤 {em(full[1])}\n"
+                    f"💼 {em(full[2])}\n"
+                    f"🔑 Kod: {em(full[3] or '—')}\n"
+                    f"🏢 {em(full[4])}\n"
+                    f"📱 {em(full[5] or '—')}\n"
+                    f"🎂 {em(full[7] or '—')}\n"
+                    f"📅 {em(sana_str)}\n"
+                    f"━━━━━━━━━━━━━━━"
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=GROUP_CHAT_ID,
+                        text=xodim_card,
+                        parse_mode="Markdown",
+                    )
+                except Exception as ex:
+                    logger.warning(f"General topic xodim xabari yuborishda xato: {ex}")
         except Exception as e:
             await query.edit_message_text(f"❌ Guruhda mavzu yaratib bo'lmadi: {e}")
 
@@ -657,19 +766,29 @@ async def _cb_user_action(query, context, action: str, target_uid: int):
             )
         except Exception as e:
             logger.warning(f"Bloklash xabari yuborishda xato (uid={target_uid}): {e}")
-        # Feature 11: checker ga xabar
         row = await db.get_xodim(target_uid)
-        if row and row[3] == "Agent":
-            checker_id = await db.get_biriktirish(target_uid)
-            if checker_id:
-                try:
-                    await context.bot.send_message(
-                        chat_id=checker_id,
-                        text=f"🚫 *{em(row[2])}* (Agent) admin tomonidan bloklandi.",
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    pass
+        if row:
+            # Feature 11: checker ga xabar
+            if row[3] == "Agent":
+                checker_id = await db.get_biriktirish(target_uid)
+                if checker_id:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=checker_id,
+                            text=f"🚫 *{em(row[2])}* (Agent) admin tomonidan bloklandi.",
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
+            # General topic ga xabar
+            try:
+                await context.bot.send_message(
+                    chat_id=GROUP_CHAT_ID,
+                    text=f"🚫 Bloklandi: *{em(row[2])}* — {em(row[3])}",
+                    parse_mode="Markdown",
+                )
+            except Exception as ex:
+                logger.warning(f"General topic block xabari yuborishda xato: {ex}")
 
     elif action == "unbl":
         await db.unblock_xodim(target_uid)
@@ -681,19 +800,29 @@ async def _cb_user_action(query, context, action: str, target_uid: int):
             )
         except Exception as e:
             logger.warning(f"Blokdan ochish xabari yuborishda xato (uid={target_uid}): {e}")
-        # Feature 11: checker ga xabar
         row = await db.get_xodim(target_uid)
-        if row and row[3] == "Agent":
-            checker_id = await db.get_biriktirish(target_uid)
-            if checker_id:
-                try:
-                    await context.bot.send_message(
-                        chat_id=checker_id,
-                        text=f"🔓 *{em(row[2])}* (Agent) blokdan chiqarildi.",
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    pass
+        if row:
+            # Feature 11: checker ga xabar
+            if row[3] == "Agent":
+                checker_id = await db.get_biriktirish(target_uid)
+                if checker_id:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=checker_id,
+                            text=f"🔓 *{em(row[2])}* (Agent) blokdan chiqarildi.",
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
+            # General topic ga xabar
+            try:
+                await context.bot.send_message(
+                    chat_id=GROUP_CHAT_ID,
+                    text=f"✅ Blokdan chiqarildi: *{em(row[2])}* — {em(row[3])}",
+                    parse_mode="Markdown",
+                )
+            except Exception as ex:
+                logger.warning(f"General topic unblock xabari yuborishda xato: {ex}")
 
 
 async def _cb_xod_page(query, page: int):
@@ -806,7 +935,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         try:
             group_id = int(parts[1])
-            level = parts[2]
+            level = "_".join(parts[2:]) if len(parts) > 2 else ""
+            if not level or level not in ("shoshilinch", "orta", "oddiy"):
+                await query.answer("❌ Noto'g'ri muhimlik darajasi.", show_alert=True)
+                return
         except (IndexError, ValueError):
             await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
             return
@@ -983,6 +1115,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != ADMIN_ID:
         return
 
+    if data == "reyting_agent":
+        await _send_agent_reyting(query.edit_message_text)
+        return
+
+    if data == "reyting_filial":
+        await _send_filial_leaderboard(query.edit_message_text, "haftalik")
+        return
+
+    if data == "reyting_menu":
+        await _show_reyting_menu(query.edit_message_text)
+        return
+
+    if data == "reyting_close":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
+
     if data.startswith("filial_lider_"):
         period = data.split("_")[2]
         await _send_filial_leaderboard(query.edit_message_text, period)
@@ -1000,7 +1151,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             _format_profil(row),
             parse_mode="Markdown",
-            reply_markup=xodim_profil_kb(uid, row[9]),
+            reply_markup=xodim_profil_kb(uid, row[9], row[2]),
+        )
+        return
+
+    if data.startswith("xodim_setgroup_"):
+        uid = safe_callback_int(data, "_", 2)
+        if uid is None:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        context.user_data["pending_setgroup_uid"] = uid
+        row = await db.get_xodim(uid)
+        ism = row[2] if row else str(uid)
+        await query.edit_message_text(
+            f"🔗 *{em(ism)}* uchun guruh ID sini yuboring:\n\n"
+            "_Masalan: \\-1001234567890_\n"
+            "_Guruhdan ID olish: @username\\_to\\_id\\_bot ni guruhga qo'shing_",
+            parse_mode="Markdown",
         )
         return
 
@@ -1068,6 +1235,41 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("klient_reject_"):
         await klient_reject_callback(update, context)
 
+    elif data == "excel_xodimlar":
+        await query.answer()
+        await query.edit_message_text("📊 Xodimlar hisoboti tayyorlanmoqda...")
+        x_data   = await db.get_all_xodimlar_for_excel()
+        m_data   = await db.get_all_xabarlar_for_excel()
+        filename = await generate_excel(x_data, m_data)
+        with open(filename, "rb") as f:
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=f,
+                caption="📊 Dusel Company — Xodimlar hisoboti.",
+                filename=filename,
+            )
+        os.remove(filename)
+
+    elif data == "excel_klientlar":
+        await query.answer()
+        await query.edit_message_text("🏪 Ochilgan klientlar Excel tayyorlanmoqda...")
+        rows = await db.get_opened_klientlar_for_excel()
+        if not rows:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="🏪 Ochilgan klientlar mavjud emas.",
+            )
+            return
+        filename = await generate_klientlar_excel(rows)
+        with open(filename, "rb") as f:
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=f,
+                caption=f"🏪 Ochilgan klientlar ({len(rows)} ta) — {__import__('datetime').date.today().strftime('%d.%m.%Y')}",
+                filename=filename,
+            )
+        os.remove(filename)
+
     elif data.startswith("klientlar_page_"):
         page = safe_callback_int(data, "_", 2)
         if page is None:
@@ -1077,6 +1279,32 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from keyboards import klientlar_page_inline
         matn = f"🏪 *Klientlar* ({len(rows)} ta)"
         await query.edit_message_text(matn, parse_mode="Markdown", reply_markup=klientlar_page_inline(rows, page))
+
+    elif data == "klient_search_start":
+        context.user_data["awaiting_klient_search"] = True
+        await query.edit_message_text(
+            "🔍 *Klient qidirish*\n\n"
+            "_Firma nomi, INN, distributor yoki telefon raqamini kiriting:_",
+            parse_mode="Markdown",
+        )
+
+    elif data.startswith("klientlar_search_page_"):
+        # safe_callback_int splits by "_" at index — use manual split for 3-part prefix
+        try:
+            page = int(data.split("_")[-1])
+        except ValueError:
+            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+            return
+        results = context.user_data.get("klient_search_results", [])
+        if not results:
+            await query.edit_message_text("🔍 Qidiruv natijalari topilmadi. Qaytadan qidiring.")
+            return
+        q = context.user_data.get("klient_search_query", "")
+        matn = f"🔍 *'{em(q)}' bo'yicha natijalar* ({len(results)} ta)"
+        await query.edit_message_text(
+            matn, parse_mode="Markdown",
+            reply_markup=klientlar_search_page_inline(results, page),
+        )
 
 
 # ══════════════════════════════════════════════
@@ -1095,22 +1323,101 @@ async def admin_statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def _send_xodimlar_page(send_fn, rows: list, page: int):
-    total = len(rows)
-    start = page * PAGE_SIZE
-    end   = min(start + PAGE_SIZE, total)
-    matn  = f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
-    matn += "_Profil ko'rish uchun ismlardan birini bosing:_"
-    await send_fn(matn, parse_mode="Markdown", reply_markup=xodimlar_page_inline(rows, page))
-
-
 @admin_only
 async def admin_xodimlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import XODIM_LIST
     rows = await db.get_approved_xodimlar()
     if not rows:
         await update.message.reply_text("👥 Tizimda faol xodimlar hozircha yo'q.")
-        return
-    await _send_xodimlar_page(update.message.reply_text, rows, page=0)
+        return ConversationHandler.END
+    context.user_data["xodim_rows"] = rows
+    total = len(rows)
+    await update.message.reply_text(
+        f"👥 *Faol xodimlar ({min(PAGE_SIZE, total)} / {total}):*\n\n"
+        "_Profil ko'rish, tahrirlash yoki qidirish uchun tugmalardan foydalaning:_",
+        parse_mode="Markdown",
+        reply_markup=xodimlar_edit_page_inline(rows, page=0),
+    )
+    return XODIM_LIST
+
+
+async def _xodim_list_page_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pagination in unified employee list."""
+    from config import XODIM_LIST
+    query = update.callback_query
+    await query.answer()
+    try:
+        page = int(query.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await query.answer("❌ Xato ma'lumot", show_alert=True)
+        return XODIM_LIST
+    rows = context.user_data.get("xodim_rows") or await db.get_approved_xodimlar()
+    context.user_data["xodim_rows"] = rows
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+    await query.edit_message_text(
+        f"👥 *Faol xodimlar ({start + 1}–{end} / {total}):*\n\n"
+        "_Profil ko'rish, tahrirlash yoki qidirish uchun tugmalardan foydalaning:_",
+        parse_mode="Markdown",
+        reply_markup=xodimlar_edit_page_inline(rows, page),
+    )
+    return XODIM_LIST
+
+
+async def _xodim_info_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View employee profile from unified list."""
+    from config import XODIM_LIST
+    query = update.callback_query
+    await query.answer()
+    try:
+        uid = int(query.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await query.answer("❌ Xato ma'lumot", show_alert=True)
+        return XODIM_LIST
+    row = await db.get_xodim_full(uid)
+    if not row:
+        await query.edit_message_text("❌ Xodim topilmadi.")
+        return XODIM_LIST
+    matn = _format_profil(row)
+    await query.edit_message_text(matn, parse_mode="Markdown", reply_markup=xodim_profil_kb(uid, row[9], row[2]))
+    return XODIM_LIST
+
+
+async def _xodim_edit_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start editing employee from unified list."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        target_uid = int(query.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await query.answer("❌ Xato ma'lumot", show_alert=True)
+        return EDIT_FIELD
+    row = await db.get_xodim(target_uid)
+    if not row:
+        await query.edit_message_text("❌ Xodim topilmadi.")
+        return EDIT_FIELD
+    _, _, ism, lavozim, filial, _ = row
+    context.user_data["edit_uid"] = target_uid
+    await query.edit_message_text(f"✅ *{ism}* ({lavozim} | {filial}) tanlandi.", parse_mode="Markdown")
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Qaysi ma'lumotni o'zgartirmoqchisiz?",
+        reply_markup=edit_field_kb(),
+    )
+    return EDIT_FIELD
+
+
+async def _xodim_search_start_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start search in unified employee menu."""
+    from config import SEARCH_QUERY
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "🔍 Xodimning *ismi* yoki *Telegram ID* sini kiriting:",
+        parse_mode="Markdown",
+    )
+    return SEARCH_QUERY
 
 
 async def _send_pending_page(send_fn, rows: list, page: int):
@@ -1151,96 +1458,17 @@ async def admin_bloklanganlar(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def admin_excel_eksport(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📥 Excel hisoboti tayyorlanmoqda...")
-    x_data   = await db.get_all_xodimlar_for_excel()
-    m_data   = await db.get_all_xabarlar_for_excel()
-    filename = await generate_excel(x_data, m_data)
-    with open(filename, "rb") as f:
-        await update.message.reply_document(
-            document=f,
-            caption="📈 Dusel Company tizimining batafsil Excel hisoboti.",
-            filename=filename,
-        )
-    os.remove(filename)
+    from keyboards import excel_menu_kb
+    await update.message.reply_text(
+        "📥 *Excel hisobotini tanlang:*",
+        parse_mode="Markdown",
+        reply_markup=excel_menu_kb(),
+    )
 
 
 # ══════════════════════════════════════════════
 # XODIMNI TAHRIRLASH OQIMI (ADMIN)
 # ══════════════════════════════════════════════
-@admin_only
-async def start_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await db.get_approved_xodimlar()
-    if not rows:
-        await update.message.reply_text("👥 Tahrirlash uchun faol xodimlar yo'q.", reply_markup=admin_kb())
-        return ConversationHandler.END
-    context.user_data["edit_rows"] = rows
-    await update.message.reply_text(
-        f"📝 Xodimni tanlang yoki ismini yozing:\n_(Jami: {len(rows)} ta xodim)_",
-        parse_mode="Markdown",
-        reply_markup=edit_select_kb(rows, page=0),
-    )
-    return EDIT_USER
-
-
-async def edit_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    try:
-        page = int(query.data.split("_")[2])
-    except (ValueError, IndexError):
-        await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
-        return EDIT_USER
-    rows = context.user_data.get("edit_rows") or await db.get_approved_xodimlar()
-    context.user_data["edit_rows"] = rows
-    await query.edit_message_reply_markup(reply_markup=edit_select_kb(rows, page))
-    return EDIT_USER
-
-
-async def edit_select_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    target_uid = int(query.data.split("_")[2])
-
-    row = await db.get_xodim(target_uid)
-    if not row:
-        await query.edit_message_text("❌ Xodim topilmadi.")
-        return ConversationHandler.END
-
-    _, _, ism, lavozim, filial, _ = row
-    context.user_data["edit_uid"] = target_uid
-
-    await query.edit_message_text(
-        f"✅ *{ism}* ({lavozim} | {filial}) tanlandi.",
-        parse_mode="Markdown",
-    )
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text="Qaysi ma'lumotni o'zgartirmoqchisiz?",
-        reply_markup=edit_field_kb(),
-    )
-    return EDIT_FIELD
-
-
-async def edit_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    search_text = update.message.text.strip()
-    rows = await db.search_xodimlar(search_text)
-
-    if not rows:
-        await update.message.reply_text(
-            f"❌ *'{search_text}'* bo'yicha xodim topilmadi. Qayta kiriting:",
-            parse_mode="Markdown",
-        )
-        return EDIT_USER
-
-    context.user_data["edit_rows"] = rows
-    await update.message.reply_text(
-        f"🔍 *{len(rows)} ta* natija topildi. Birini tanlang:",
-        parse_mode="Markdown",
-        reply_markup=edit_select_kb(rows, page=0),
-    )
-    return EDIT_USER
-
-
 async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     field = update.message.text.strip()
     if field == "❌ Bekor qilish":
@@ -1288,16 +1516,6 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════
 # XODIM QIDIRISH OQIMI (ADMIN)
 # ══════════════════════════════════════════════
-@admin_only
-async def admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔍 Xodimning *ismi* yoki *Telegram ID* sini kiriting:",
-        parse_mode="Markdown",
-        reply_markup=remove_kb(),
-    )
-    return SEARCH_QUERY
-
-
 async def search_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query_text = update.message.text.strip()
     rows = await db.search_xodimlar(query_text)
@@ -1316,6 +1534,83 @@ async def search_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=search_results_kb(rows),
     )
     return ConversationHandler.END
+
+
+_ACTION_ICON = {
+    "lokatsiya_ozgartirish": "📍",
+    "raqam_ozgartirish":     "📞",
+    "dokon_qoshish":         "🏪",
+    "limit_qoshish":         "💰",
+    "vizit_muammo":          "🖼",
+    "boshqa_muammo":         "💬",
+    "supervisor_tasdiqlash": "✅",
+    "supervisor_rad":        "❌",
+}
+_ACTION_LABEL = {
+    "lokatsiya_ozgartirish": "Lokatsiya o'zgartirildi",
+    "raqam_ozgartirish":     "Raqam o'zgartirildi",
+    "dokon_qoshish":         "Dokon qo'shildi",
+    "limit_qoshish":         "Limit qo'shildi",
+    "vizit_muammo":          "Vizitda muammo",
+    "boshqa_muammo":         "Boshqa muammo",
+    "supervisor_tasdiqlash": "Supervisor tasdiqladi",
+    "supervisor_rad":        "Supervisor rad etdi",
+}
+_STATUS_ICON  = {"pending": "⏳", "approved": "✅", "rejected": "❌"}
+_STATUS_LABEL = {"pending": "Kutilmoqda", "approved": "Tasdiqlandi", "rejected": "Rad etildi"}
+_ROLE_LABEL   = {
+    "agent": "agent", "supervisor": "supervisor",
+    "filial_rahbari": "filial rahbari", "admin": "admin",
+}
+
+
+async def _send_tarix(send_fn, logs: list, filter_type: str = "all"):
+    from keyboards import tarix_filter_kb
+    if not logs:
+        text = "📋 *O'zgarishlar tarixi bo'sh.*"
+    else:
+        text = "📋 *O'zgarishlar tarixi*\n\n"
+        for i, row in enumerate(logs, 1):
+            (_, u_id, u_role, action, target,
+             old_v, new_v, status, req_id, created_at, ism) = row
+            icon        = _ACTION_ICON.get(action, "📌")
+            label       = _ACTION_LABEL.get(action, action)
+            s_icon      = _STATUS_ICON.get(status, "—")
+            s_label     = _STATUS_LABEL.get(status, status or "—")
+            role_lbl    = _ROLE_LABEL.get(u_role, u_role or "—")
+            user_name   = ism or ("Admin" if u_id == ADMIN_ID else str(u_id))
+            target_part = f" — {em(target)}" if target else ""
+            try:
+                dt       = datetime.strptime(created_at[:19], "%Y-%m-%d %H:%M:%S")
+                time_str = dt.strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                time_str = (created_at or "")[:16]
+            text += (
+                f"{i}. 👤 *{em(user_name)}* ({role_lbl})\n"
+                f"   {icon} {label}{target_part}\n"
+                f"   🕐 {time_str}\n"
+                f"   {s_icon} {s_label}\n\n"
+            )
+    await send_fn(text, parse_mode="Markdown", reply_markup=tarix_filter_kb(filter_type))
+
+
+@admin_only
+async def admin_tarix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    filter_type = context.user_data.get("tarix_filter", "all")
+    logs = await db.get_audit_logs(filter_type=filter_type)
+    await _send_tarix(update.message.reply_text, logs, filter_type)
+
+
+async def tarix_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        return
+    parts = query.data.split("_", 2)  # tarix_f_<filter>
+    filter_type = parts[2] if len(parts) == 3 else "all"
+    context.user_data["tarix_filter"] = filter_type
+    logs = await db.get_audit_logs(filter_type=filter_type)
+    await _send_tarix(query.edit_message_text, logs, filter_type)
 
 
 def _format_profil(row: tuple) -> str:
@@ -1400,7 +1695,11 @@ async def biriktir_list_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """bir_detail_{uid} — agent detail ko'rsatish."""
     query    = update.callback_query
     await query.answer()
-    agent_id = int(query.data.split("_")[2])
+    try:
+        agent_id = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+        return BIRIKTIR_AGENT
     context.user_data["biriktir_agent_id"] = agent_id
     await _show_agent_detail(query.edit_message_text, agent_id)
     return BIRIKTIR_DETAIL
@@ -1425,7 +1724,11 @@ async def biriktir_agent_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """bir_agent_{uid} — agent tanlangan (yangi biriktirish uchun)."""
     query    = update.callback_query
     await query.answer()
-    agent_id = int(query.data.split("_")[2])
+    try:
+        agent_id = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+        return BIRIKTIR_AGENT
     context.user_data["biriktir_agent_id"] = agent_id
     row = await db.get_xodim(agent_id)
     if not row:
@@ -1457,7 +1760,11 @@ async def biriktir_change_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """bir_change_{uid} — checker almashtirish."""
     query    = update.callback_query
     await query.answer()
-    agent_id = int(query.data.split("_")[2])
+    try:
+        agent_id = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+        return BIRIKTIR_DETAIL
     context.user_data["biriktir_agent_id"] = agent_id
     checkers = await db.get_available_checkers()
     if not checkers:
@@ -1477,7 +1784,11 @@ async def biriktir_rm_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """bir_rm_{uid} — biriktirish o'chirish."""
     query    = update.callback_query
     await query.answer()
-    agent_id = int(query.data.split("_")[2])
+    try:
+        agent_id = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
+        return BIRIKTIR_AGENT
     await db.delete_biriktirish(agent_id)
     row = await db.get_xodim(agent_id)
     ism = row[2] if row else str(agent_id)
@@ -1591,6 +1902,32 @@ async def biriktir_checker_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
+async def _show_reyting_menu(send_fn):
+    await send_fn(
+        "🏆 *Reyting menyusi*\n\n_Bo'limni tanlang:_",
+        parse_mode="Markdown",
+        reply_markup=reyting_menu_kb(),
+    )
+
+
+async def _send_agent_reyting(send_fn):
+    rows = await db.get_agent_leaderboard()
+    matn = "⭐ *Agent Reytingi*\n\n"
+    if not rows:
+        matn += "_Hali hech qanday baho yo'q._"
+    else:
+        for i, r in enumerate(rows, 1):
+            uid, ism, filial, avg, total, haftalik = r
+            medal = MEDALS.get(i, f"#{i}")
+            haftalik_str = f"{haftalik}" if haftalik else "—"
+            matn += (
+                f"{medal} *{em(ism)}* | {em(filial)}\n"
+                f"   Umumiy: {'⭐' * round(avg)} *{avg}* ({total} baho)"
+                f"  |  Bu hafta: {haftalik_str}\n\n"
+            )
+    await send_fn(matn, parse_mode="Markdown", reply_markup=agent_reyting_kb())
+
+
 async def _send_filial_leaderboard(send_fn, period: str = "haftalik"):
     rows = await db.get_filial_stats(period)
     PERIOD_LABEL = {"haftalik": "Haftalik", "oylik": "Oylik", "yillik": "Yillik", "hammasi": "Jami"}
@@ -1617,27 +1954,8 @@ async def _send_filial_leaderboard(send_fn, period: str = "haftalik"):
 
 
 @admin_only
-async def admin_filial_lider(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _send_filial_leaderboard(update.message.reply_text, "haftalik")
-
-
-@admin_only
-async def admin_agent_reyting(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await db.get_agent_leaderboard()
-    matn = "⭐ *Agent Reytingi*\n\n"
-    if not rows:
-        matn += "_Hali hech qanday baho yo'q._"
-    else:
-        for i, r in enumerate(rows, 1):
-            uid, ism, filial, avg, total, haftalik = r
-            medal = MEDALS.get(i, f"#{i}")
-            haftalik_str = f"{haftalik}" if haftalik else "—"
-            matn += (
-                f"{medal} *{em(ism)}* | {em(filial)}\n"
-                f"   Umumiy: {'⭐' * round(avg)} *{avg}* ({total} baho)"
-                f"  |  Bu hafta: {haftalik_str}\n\n"
-            )
-    await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=admin_kb())
+async def admin_reyting_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _show_reyting_menu(update.message.reply_text)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -1646,35 +1964,49 @@ async def admin_agent_reyting(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def new_client_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show client registration template and initialize conversation."""
     uid = update.effective_user.id
-    user = await db.get_xodim(uid)
 
-    if not user or user[3] == "Agent":
-        await update.message.reply_text("❌ Faqat Agent bo'lmagan xodimlar klientlar qo'sha oladi.")
-        return ConversationHandler.END
-
-    context.user_data["klient_supervisor_id"] = uid
-    context.user_data["klient_data"] = {}
+    # Allow admin or approved xodim (not Agent)
+    if uid == ADMIN_ID:
+        ism = "Admin"
+        context.user_data["klient_supervisor_id"] = uid
+        context.user_data["klient_data"] = {}
+        logger.info(f"[KLIENT] Admin {uid} starting client registration")
+    else:
+        user = await db.get_xodim(uid)
+        if not user or user[0] != "approved" or user[3] == "Agent":
+            return ConversationHandler.END
+        ism = user[2]
+        context.user_data["klient_supervisor_id"] = uid
+        context.user_data["klient_data"] = {}
+        logger.info(f"[KLIENT] User {uid} ({ism}) starting client registration")
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🔔 *{em(ism)}* yangi klient ochishni boshladi.",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.warning(f"Admin start xabari yuborishda xato: {e}")
 
     template = (
         "📋 *Yangi Klient Shablon:*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📸 Rasm: (do'kon rasmi)\n"
-        "🏢 Firma nomi: Bobur Savdo\n"
-        "📱 Telefon 1: +998901234567\n"
-        "📱 Telefon 2: +998901234568\n"
-        "🔢 INN: 123456789\n"
-        "📍 Orienter: Chilonzor bozori yaqin\n"
-        "📌 Lokatsiya: (GPS koordinatalari)\n"
-        "🗂 Kategoriya: Supermarket\n"
-        "🏪 Do'kon turi: Chakana\n"
-        "👤 Distributor: Sardor\n"
-        "👨 Agent kodi: AN001\n"
-        "📅 Vizit kuni: Dushanba\n"
-        "🔄 Chastota: 1x1\n"
-        "💰 Limit: 5000000\n"
-        "🏷 Brendlar: Dusel, Verla\n"
+        "1️⃣ 📸 Rasm: (do'kon rasmi)\n"
+        "2️⃣ 🏢 Firma nomi: Bobur Savdo\n"
+        "3️⃣ 📱 Telefon 1: +998901234567\n"
+        "4️⃣ 📱 Telefon 2: +998901234568\n"
+        "5️⃣ 🔢 INN: 123456789\n"
+        "6️⃣ 📍 Orienter: Chilonzor bozori yaqin\n"
+        "7️⃣ 📌 Lokatsiya: 41.2995, 69.2401\n"
+        "8️⃣ 🗂 Kategoriya: (ro'yxatdan tanlang)\n"
+        "9️⃣ 🏪 Do'kon turi: (ro'yxatdan tanlang)\n"
+        "🔟 👤 Distributor: Sardor\n"
+        "1️⃣1️⃣ 👨 Agent/Vizit: AN001 Dushanba\n"
+        "1️⃣2️⃣ 💰 Limit:\n"
+        "   Cable: 1,000,000\n"
+        "   Dusel: 500,000\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👇 Quyida kiritish uchun talab qilingan ma'lumotlarni kiriting:"
+        "👇 Quyida kiritish boshlang:"
     )
     await update.message.reply_text(template, parse_mode="Markdown", reply_markup=remove_kb())
 
@@ -1690,41 +2022,49 @@ async def new_client_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def klient_rasm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """2-qadam: rasm qabul qilish."""
-    if not update.message.photo:
+    uid = update.effective_user.id
+
+    if not update.message or not update.message.photo:
+        logger.info(f"[KLIENT] {uid} - klient_rasm: Non-photo input received, requesting photo")
         await update.message.reply_text("❌ Iltimos, rasm yuboring.")
         return KLIENT_RASM
 
     photo_file_id = update.message.photo[-1].file_id
     context.user_data["klient_data"]["rasm_file_id"] = photo_file_id
-    logger.info(f"[KLIENT] Photo received: {photo_file_id[:20]}...")
+    logger.info(f"[KLIENT] {uid} - Photo accepted: {photo_file_id[:20]}...")
 
-    await update.message.reply_text(
+    msg_sent = await update.message.reply_text(
         "📝 *2-QADAM: Firma nomi yoki Do'konchi ismi* (majburiy)\n\n"
         "_Masalan: Bobur Savdo, Xasan Dukoni, ABC Kompaniyasi_",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
+    logger.info(f"[KLIENT] {uid} - Transitioning to KLIENT_FIRMA_NOMI (msg_id: {msg_sent.message_id})")
     return KLIENT_FIRMA_NOMI
 
 
 async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """3-qadam: firma nomi."""
+    uid = update.effective_user.id
+
     if not update.message or not update.message.text:
+        logger.warning(f"[KLIENT] {uid} - klient_firma_nomi: No text input")
         await update.message.reply_text(
             "❌ Iltimos, firma nomini kiriting."
         )
-        logger.info("[KLIENT] Invalid firma input")
         return KLIENT_FIRMA_NOMI
 
     firma_nomi = update.message.text.strip()
-    logger.info(f"[KLIENT] Firma input: {firma_nomi}")
+    logger.info(f"[KLIENT] {uid} - Firma input: {firma_nomi}")
 
     if len(firma_nomi) < 2:
+        logger.warning(f"[KLIENT] {uid} - Firma too short: {len(firma_nomi)} chars")
         await update.message.reply_text("❌ Firma nomi kamida 2 ta harf bo'lishi kerak.")
         return KLIENT_FIRMA_NOMI
 
     existing_firma = await db.check_duplicate_firma(firma_nomi)
     if existing_firma:
+        logger.warning(f"[KLIENT] {uid} - Duplicate firma: {firma_nomi}")
         await update.message.reply_text(
             f"❌ *Bu firma allaqachon ro'yxatda bor!*\n\n"
             f"📝 Firma: {em(existing_firma['firma_nomi'])}\n"
@@ -1735,8 +2075,9 @@ async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            user = await db.get_xodim(update.effective_user.id)
-            supervisor_name = user[2] if user else "Unknown"
+            supervisor_name = "Admin" if uid == ADMIN_ID else (
+                (await db.get_xodim(uid) or [None, None, str(uid)])[2]
+            )
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=(
@@ -1755,13 +2096,15 @@ async def klient_firma_nomi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return KLIENT_FIRMA_NOMI
 
     context.user_data["klient_data"]["firma_nomi"] = firma_nomi
+    logger.info(f"[KLIENT] {uid} - Firma saved: {firma_nomi}")
 
-    await update.message.reply_text(
+    msg_sent = await update.message.reply_text(
         "📱 *3-QADAM: 1-Telefon raqami* (majburiy)\n\n"
         "_Masalan: +998901234567 yoki 901234567_",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
+    logger.info(f"[KLIENT] {uid} - Transitioning to KLIENT_TELEFON1 (msg_id: {msg_sent.message_id})")
     return KLIENT_TELEFON1
 
 
@@ -1792,44 +2135,35 @@ async def klient_telefon1(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     existing_telefon = await db.check_duplicate_telefon(telefon1)
     if existing_telefon:
-        await update.message.reply_text(
-            f"❌ *Bu telefon raqami allaqachon ro'yxatda bor!*\n\n"
-            f"📝 Firma: {em(existing_telefon['firma_nomi'])}\n"
-            f"📱 Telefon: {em(existing_telefon['telefon1'])}\n"
-            f"🏪 Kategoriya: {em(existing_telefon['kategoriya'])}\n\n"
-            f"_Iltimos, boshqa telefon raqamini kiriting._",
-            parse_mode="Markdown",
-            reply_markup=remove_kb(),
-        )
-
-        try:
-            user = await db.get_xodim(update.effective_user.id)
-            supervisor_name = user[2] if user else "Unknown"
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"⚠️ *Dublikat Aniqlandi: Telefon Raqami*\n\n"
-                    f"📱 Kiritilgan telefon: {em(telefon1)}\n"
-                    f"👤 Supervisor: {em(supervisor_name)}\n"
-                    f"📍 Allaqachon ro'yxatda:\n"
-                    f"  • Firma: {em(existing_telefon['firma_nomi'])}\n"
-                    f"  • Telefon: {em(existing_telefon['telefon1'])}"
-                ),
+        uid = update.effective_user.id
+        if uid == ADMIN_ID:
+            await update.message.reply_text(
+                f"❌ *Bu telefon raqami allaqachon ro'yxatda bor!*\n\n"
+                f"📝 Firma: {em(existing_telefon['firma_nomi'])}\n"
+                f"📞 Telefon: {em(existing_telefon['telefon1'])}\n"
+                f"🏪 Kategoriya: {em(existing_telefon['kategoriya'])}\n\n"
+                f"_Iltimos, boshqa telefon raqamini kiriting._",
                 parse_mode="Markdown",
+                reply_markup=remove_kb(),
             )
-        except Exception as e:
-            logger.warning(f"Admin dublikat xabari yuborishda xato: {e}")
-
+        else:
+            await update.message.reply_text(
+                "❌ Bu raqam bilan dokon allaqachon ochilgan.\n"
+                "Iltimos, boshqa telefon raqamini kiriting.",
+                reply_markup=remove_kb(),
+            )
         return KLIENT_TELEFON1
 
     context.user_data["klient_data"]["telefon1"] = telefon1
+    logger.info(f"[KLIENT] {update.effective_user.id} - Telefon1 saved: {telefon1}")
 
-    await update.message.reply_text(
-        "📱 *3-QADAM: 2-Telefon raqami* (ixtiyoriy)\n\n"
+    msg_sent = await update.message.reply_text(
+        "📱 *4-QADAM: 2-Telefon raqami* (ixtiyoriy)\n\n"
         "_Masalan: +998901234568 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
         parse_mode="Markdown",
         reply_markup=telefon2_kb(),
     )
+    logger.info(f"[KLIENT] {update.effective_user.id} - Transitioning to KLIENT_TELEFON2 (msg_id: {msg_sent.message_id})")
     return KLIENT_TELEFON2
 
 
@@ -1861,8 +2195,11 @@ async def klient_telefon2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"[KLIENT] Phone2 format error: {e}")
             return KLIENT_TELEFON2
 
-    await update.message.reply_text(
-        "🔢 *4-QADAM: INN raqami* (ixtiyoriy)\n"
+    uid = update.effective_user.id
+    logger.info(f"[KLIENT] {uid} - Telefon2: {context.user_data['klient_data'].get('telefon2', 'None')}")
+
+    msg_sent = await update.message.reply_text(
+        "🔢 *5-QADAM: INN raqami* (ixtiyoriy)\n"
         "_Masalan: 123456789 yoki \"⏭ O'tkazib yuborish\" tugmasini bosing_",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(
@@ -1870,6 +2207,7 @@ async def klient_telefon2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             resize_keyboard=True, one_time_keyboard=True,
         ),
     )
+    logger.info(f"[KLIENT] {uid} - Transitioning to KLIENT_INN (msg_id: {msg_sent.message_id})")
     return KLIENT_INN
 
 
@@ -1879,7 +2217,7 @@ async def klient_inn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["klient_data"]["inn"] = None
     else:
         inn = update.message.text.strip()
-        if inn and (not inn.isdigit() or len(inn) < 9):
+        if inn and (not inn.isdigit() or len(inn) != 9):
             await update.message.reply_text(
                 "❌ INN raqami 9 ta raqamdan iborat bo'lishi kerak yoki o'tkazib yuborish tugmasini bosing.",
                 reply_markup=ReplyKeyboardMarkup(
@@ -1890,17 +2228,21 @@ async def klient_inn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return KLIENT_INN
         context.user_data["klient_data"]["inn"] = inn if inn else None
 
-    await update.message.reply_text(
-        "📍 *Orienter* (yaqin joy tavsifi)\n"
+    uid = update.effective_user.id
+    logger.info(f"[KLIENT] {uid} - INN: {context.user_data['klient_data'].get('inn', 'None')}")
+
+    msg_sent = await update.message.reply_text(
+        "📍 *6-QADAM: Orienter* (yaqin joy tavsifi)\n"
         "_Masalan: Bazarning yonida, Mektebning oldida_",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
+    logger.info(f"[KLIENT] {uid} - Transitioning to KLIENT_ORIENTER (msg_id: {msg_sent.message_id})")
     return KLIENT_ORIENTER
 
 
 async def klient_orienter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """7-qadam: orienter."""
+    """6-qadam: orienter."""
     orienter = update.message.text.strip()
     if len(orienter) < 3:
         await update.message.reply_text("❌ Orienter kamida 3 ta harf bo'lishi kerak.")
@@ -1909,28 +2251,68 @@ async def klient_orienter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["klient_data"]["orienter"] = orienter
 
     await update.message.reply_text(
-        "📍 *Lokatsiya* (majburiy)\n\n"
-        "_Iltimos, do'kon joylashuvini yuboring:_",
+        "📍 *7-QADAM: Lokatsiya* (majburiy)\n\n"
+        "_GPS ulashish tugmasidan yoki koordinata/manzil yozing:_\n"
+        "_Masalan: 41.2995, 69.2401_",
         parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("📍 Lokatsiyani yuborish", request_location=True)]],
-            resize_keyboard=True, one_time_keyboard=True,
-        ),
+        reply_markup=remove_kb(),
     )
     return KLIENT_LOKATSIYA
 
 
+
 async def klient_lokatsiya(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """8-qadam: lokatsiya."""
-    if not update.message.location:
-        await update.message.reply_text("❌ Iltimos, lokatsiyani yuborish tugmasini bosing.")
+    """7-qadam: lokatsiya (mandatory) - qabul qiladi: share location, forwarded location, yoki text."""
+    msg = update.message
+
+    # Option 1: Accept shared/live location button or forwarded location
+    if msg.location:
+        try:
+            context.user_data["klient_data"]["lokatsiya_lat"] = msg.location.latitude
+            context.user_data["klient_data"]["lokatsiya_lon"] = msg.location.longitude
+            context.user_data["klient_data"]["lokatsiya_address"] = None
+            logger.info(f"[KLIENT] Location accepted: {msg.location.latitude}, {msg.location.longitude}")
+        except Exception as e:
+            logger.error(f"Lokatsiya xatosi: {e}")
+            await msg.reply_text("❌ Lokatsiyani saqlashda xato. Qayta urinib ko'ring.")
+            return KLIENT_LOKATSIYA
+
+    # Option 2: Accept text — try "lat, lon" first, fall back to freeform address
+    elif msg.text and msg.text.strip():
+        text_input = msg.text.strip()
+        coord_m = re.match(r'^(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$', text_input)
+        if coord_m:
+            try:
+                lat = float(coord_m.group(1))
+                lon = float(coord_m.group(2))
+                if -90 <= lat <= 90 and -180 <= lon <= 180:
+                    context.user_data["klient_data"]["lokatsiya_lat"] = lat
+                    context.user_data["klient_data"]["lokatsiya_lon"] = lon
+                    context.user_data["klient_data"]["lokatsiya_address"] = None
+                    logger.info(f"[KLIENT] Parsed text coords: {lat}, {lon}")
+                else:
+                    raise ValueError("out of range")
+            except ValueError:
+                context.user_data["klient_data"]["lokatsiya_address"] = text_input
+                context.user_data["klient_data"]["lokatsiya_lat"] = None
+                context.user_data["klient_data"]["lokatsiya_lon"] = None
+                logger.info(f"[KLIENT] Invalid coord range, stored as address: {text_input}")
+        else:
+            context.user_data["klient_data"]["lokatsiya_address"] = text_input
+            context.user_data["klient_data"]["lokatsiya_lat"] = None
+            context.user_data["klient_data"]["lokatsiya_lon"] = None
+            logger.info(f"[KLIENT] Location address accepted: {text_input}")
+
+    else:
+        await msg.reply_text(
+            "❌ Lokatsiyani yuboring yoki manzilni matn ko'rinishida kiriting.",
+        )
         return KLIENT_LOKATSIYA
 
-    context.user_data["klient_data"]["lokatsiya_lat"] = update.message.location.latitude
-    context.user_data["klient_data"]["lokatsiya_lon"] = update.message.location.longitude
-
-    await update.message.reply_text(
-        "🏪 *Kategoriya* (majburiy)",
+    # Send kategoriya message independently (not as reply to location)
+    await context.bot.send_message(
+        chat_id=msg.chat_id,
+        text="🏪 *8-QADAM: Kategoriya* (majburiy)",
         parse_mode="Markdown",
         reply_markup=klient_kategoriya_kb(),
     )
@@ -1938,19 +2320,20 @@ async def klient_lokatsiya(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def klient_kategoriya(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """9-qadam: kategoriya (inline)."""
+    """8-qadam: kategoriya (inline)."""
     query = update.callback_query
     await query.answer()
 
-    idx = safe_callback_int(query.data, "_", 2)
-    if idx is None or idx >= len(DOKON_TURLARI):
+    slug = query.data[len("klient_kat_"):]
+    value = DOKON_SLUGLARI.get(slug)
+    if not value:
         await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
         return KLIENT_KATEGORIYA
 
-    context.user_data["klient_data"]["kategoriya"] = DOKON_TURLARI[idx]
+    context.user_data["klient_data"]["kategoriya"] = value
 
     await query.edit_message_text(
-        "🏢 *Do'kon turi* (majburiy)",
+        "🏢 *9-QADAM: Do'kon turi* (majburiy)",
         parse_mode="Markdown",
         reply_markup=klient_dokon_turi_kb(),
     )
@@ -1962,117 +2345,78 @@ async def klient_dokon_turi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    idx = safe_callback_int(query.data, "_", 2)
-    if idx is None or idx >= len(DOKON_TURLARI):
+    slug = query.data[len("klient_tur_"):]
+    value = DOKON_SLUGLARI.get(slug)
+    if not value:
         await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
         return KLIENT_DOKON_TURI
 
-    context.user_data["klient_data"]["dokon_turi"] = DOKON_TURLARI[idx]
+    context.user_data["klient_data"]["dokon_turi"] = value
+    logger.info(f"[KLIENT] Dokon turi selected: {value}")
 
-    distributors = await db.get_available_checkers()
-    if not distributors:
-        await query.edit_message_text("❌ Tizimda distributor yo'q.")
-        return ConversationHandler.END
-
-    await query.edit_message_text(
-        "🚚 *Distributor* (majburiy)",
+    await query.edit_message_text(f"✅ Do'kon turi: *{value}*", parse_mode="Markdown")
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="🚚 *10-QADAM: Distributor* (majburiy)\n\n_Distributor nomini kiriting:_",
         parse_mode="Markdown",
-        reply_markup=klient_distributor_kb(distributors),
+        reply_markup=remove_kb(),
     )
     return KLIENT_DISTRIBUTOR
 
 
 async def klient_distributor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """11-qadam: distributor."""
-    query = update.callback_query
-    await query.answer()
+    """11-qadam: distributor - accept any text input."""
+    distributor_name = update.message.text.strip()
 
-    dist_id = safe_callback_int(query.data, "_", 2)
-    if dist_id is None:
-        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+    if not distributor_name or len(distributor_name) < 2:
+        await update.message.reply_text("❌ Distributor nomi kamida 2 ta harf bo'lishi kerak. Qayta kiriting:")
         return KLIENT_DISTRIBUTOR
 
-    dist = await db.get_xodim(dist_id)
-    if not dist:
-        await query.answer("❌ Distributor topilmadi.", show_alert=True)
-        return KLIENT_DISTRIBUTOR
+    context.user_data["klient_data"]["distributor"] = distributor_name
+    logger.info(f"[KLIENT] Distributor accepted: {distributor_name}")
 
-    context.user_data["klient_data"]["distributor"] = dist[2]  # ism
-    context.user_data["klient_data"]["distributor_id"] = dist_id
-
-    agents = await db.get_agents()
-    if not agents:
-        await query.edit_message_text("❌ Tizimda agent yo'q.")
-        return ConversationHandler.END
-
-    await query.edit_message_text(
-        "👤 *Agent kodi* (majburiy)",
+    await update.message.reply_text(
+        "👨 *11-QADAM: Agent va Vizit kuni* (majburiy)\n\n"
+        "_Agent kodi va vizit kunini birgalikda kiriting._\n"
+        "_Masalan: AN001 Dushanba_",
         parse_mode="Markdown",
-        reply_markup=klient_agent_kb(agents),
+        reply_markup=remove_kb(),
     )
     return KLIENT_AGENT_KOD
 
 
 async def klient_agent_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """12-qadam: agent kod."""
-    query = update.callback_query
-    await query.answer()
-
-    agent_id = safe_callback_int(query.data, "_", 2)
-    if agent_id is None:
-        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
+    """11-qadam: agent va vizit kuni - free text input."""
+    if not update.message or not update.message.text:
         return KLIENT_AGENT_KOD
 
-    agent = await db.get_xodim(agent_id)
-    if not agent:
-        await query.answer("❌ Agent topilmadi.", show_alert=True)
+    agent_vizit = update.message.text.strip().upper()
+    if agent_vizit not in AGENT_KODLAR:
+        await update.message.reply_text(
+            "❌ Bu agent kodi tizimda mavjud emas.\n"
+            "Iltimos, to'g'ri agent kodini kiriting:"
+        )
         return KLIENT_AGENT_KOD
 
-    context.user_data["klient_data"]["agent_kod"] = agent[5]  # kod
+    prefix = agent_vizit[:2]
+    region = AGENT_PREFIX_REGIONS.get(prefix)
+    if not region:
+        await update.message.reply_text(
+            "❌ Agent kodining prefiksi noto'g'ri.\n"
+            "Iltimos, to'g'ri agent kodini kiriting:"
+        )
+        return KLIENT_AGENT_KOD
 
-    await query.edit_message_text(
-        "📅 *Vizit kuni* (majburiy)",
-        parse_mode="Markdown",
-        reply_markup=klient_vizit_kun_kb(),
-    )
-    return KLIENT_VIZIT_KUN
+    context.user_data["klient_data"]["agent_vizit"] = agent_vizit
+    context.user_data["klient_data"]["agent_region"] = region
+    logger.info(f"[KLIENT] Agent/Vizit accepted: {agent_vizit} ({region})")
 
-
-async def klient_vizit_kun(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """13-qadam: vizit kuni."""
-    query = update.callback_query
-    await query.answer()
-
-    idx = safe_callback_int(query.data, "_", 2)
-    if idx is None or idx >= len(VIZIT_KUNLARI):
-        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
-        return KLIENT_VIZIT_KUN
-
-    context.user_data["klient_data"]["vizit_kun"] = VIZIT_KUNLARI[idx]
-
-    await query.edit_message_text(
-        "🔄 *Chastota* (majburiy)",
-        parse_mode="Markdown",
-        reply_markup=klient_chastota_kb(),
-    )
-    return KLIENT_CHASTOTA
-
-
-async def klient_chastota(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """14-qadam: chastota."""
-    query = update.callback_query
-    await query.answer()
-
-    idx = safe_callback_int(query.data, "_", 2)
-    if idx is None or idx >= len(CHASTOTA_LIST):
-        await query.answer("❌ Noto'g'ri tanlov.", show_alert=True)
-        return KLIENT_CHASTOTA
-
-    context.user_data["klient_data"]["chastota"] = CHASTOTA_LIST[idx]
-
-    await query.edit_message_text(
-        "💰 *Limit summa* (majburiy)\n\n"
-        "_Masalan: 5000000 (5 million so'mda)_",
+    await update.message.reply_text(
+        f"✅ Agent kodi qabul qilindi: *{agent_vizit}*\n"
+        f"📍 Hudud: *{region}*\n\n"
+        "💰 *12-QADAM: Limit* (majburiy)\n\n"
+        "_Har loyiha uchun limitni yozing. Masalan:_\n"
+        "```\nCable: 1,000,000\nDusel: 500,000\nTools: 800,000\n```",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
@@ -2080,68 +2424,41 @@ async def klient_chastota(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def klient_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """15-qadam: limit."""
-    try:
-        limit = float(update.message.text.strip())
-        if limit <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("❌ Iltimos, to'g'ri raqam kiriting.")
+    """12-qadam: limit - free text."""
+    if not update.message or not update.message.text:
         return KLIENT_LIMIT
 
-    context.user_data["klient_data"]["limit_summa"] = limit
-    context.user_data["klient_data"]["selected_brands"] = []
+    limit_text = update.message.text.strip()
+    if not limit_text:
+        await update.message.reply_text("❌ Limit bo'sh bo'lmasligi kerak.")
+        return KLIENT_LIMIT
 
-    await update.message.reply_text(
-        "🏷️ *Brendlar* (majburiy - bir nechta tanlash mumkin)\n\n"
-        "_Bosing ☑️ aytilgan brendlarni tanlang:_",
-        parse_mode="Markdown",
-        reply_markup=klient_brendlar_kb(),
-    )
-    return KLIENT_BRENDLAR
+    context.user_data["klient_data"]["limit_text"] = limit_text
+    logger.info(f"[KLIENT] Limit accepted: {limit_text[:50]}")
+
+    await _show_klient_summary(update.message.reply_text, context.user_data["klient_data"])
+    return KLIENT_CONFIRM
 
 
-async def klient_brendlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """16-qadam: brendlar (multi-select)."""
-    query = update.callback_query
-    await query.answer()
+def _format_lokatsiya(data: dict) -> str:
+    """Return a human-readable location string from klient_data."""
+    lat = data.get("lokatsiya_lat")
+    lon = data.get("lokatsiya_lon")
+    if lat is not None and lon is not None:
+        return f"{lat:.6f}, {lon:.6f}"
+    return data.get("lokatsiya_address") or "—"
 
-    data = query.data
-    selected = context.user_data.get("klient_data", {}).get("selected_brands", [])
 
-    if data == "klient_brands_confirm":
-        if not selected:
-            await query.answer("❌ Kamida bir brendni tanlang.", show_alert=True)
-            return KLIENT_BRENDLAR
-        context.user_data["klient_data"]["brendlar"] = ",".join([BRENDLAR_LIST[i] for i in selected])
-        await _show_klient_summary(query.edit_message_text, context.user_data["klient_data"])
-        return KLIENT_CONFIRM
-
-    elif data == "klient_cancel":
-        await query.edit_message_text("❌ Qayta boshlaylik. Ismingizni kiriting:", reply_markup=remove_kb())
-        return ConversationHandler.END
-
-    else:
-        idx = safe_callback_int(data, "_", 2)
-        if idx is None or idx >= len(BRENDLAR_LIST):
-            return KLIENT_BRENDLAR
-
-        if idx in selected:
-            selected.remove(idx)
-        else:
-            selected.append(idx)
-
-        context.user_data["klient_data"]["selected_brands"] = selected
-        await query.edit_message_text(
-            "🏷️ *Brendlar* (majburiy - bir nechta tanlash mumkin)",
-            parse_mode="Markdown",
-            reply_markup=klient_brendlar_kb_selected(selected),
-        )
-        return KLIENT_BRENDLAR
+async def _get_supervisor_name(supervisor_id: int, context) -> str:
+    if supervisor_id == ADMIN_ID:
+        return "Admin"
+    user = await db.get_xodim(supervisor_id)
+    return user[2] if user else str(supervisor_id)
 
 
 async def _show_klient_summary(send_fn, data: dict):
     """Klient ma'lumotlarining xulasasini ko'rsatish."""
+    lokatsiya = _format_lokatsiya(data)
     summary = (
         f"📋 *Klient ma'lumotlari:*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -2149,17 +2466,14 @@ async def _show_klient_summary(send_fn, data: dict):
         f"🏢 Firma: {em(data['firma_nomi'])}\n"
         f"📱 Tel 1: {em(data['telefon1'])}\n"
         f"📱 Tel 2: {em(data.get('telefon2') or '—')}\n"
-        f"🔢 INN: {em(data['inn'])}\n"
+        f"🔢 INN: {em(data.get('inn') or '—')}\n"
         f"📍 Orienter: {em(data['orienter'])}\n"
-        f"📌 Lokatsiya: ✅\n"
+        f"📌 Lokatsiya: {em(lokatsiya)}\n"
         f"🗂 Kategoriya: {em(data['kategoriya'])}\n"
         f"🏪 Do'kon turi: {em(data['dokon_turi'])}\n"
         f"👤 Distributor: {em(data['distributor'])}\n"
-        f"👨 Agent: {em(data['agent_kod'])}\n"
-        f"📅 Vizit: {em(data['vizit_kun'])}\n"
-        f"🔄 Chastota: {em(data['chastota'])}\n"
-        f"💰 Limit: {em(str(int(data['limit_summa'])))}\n"
-        f"🏷 Brendlar: {em(data['brendlar'])}\n"
+        f"👨 Agent kodi: {em(data['agent_vizit'])} — 📍 {em(data.get('agent_region', ''))}\n"
+        f"💰 Limit: {em(data['limit_text'])}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     await send_fn(summary, parse_mode="Markdown", reply_markup=klient_confirm_kb())
@@ -2184,58 +2498,129 @@ async def klient_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 orienter=data.get("orienter"),
                 lokatsiya_lat=data.get("lokatsiya_lat"),
                 lokatsiya_lon=data.get("lokatsiya_lon"),
+                lokatsiya_address=data.get("lokatsiya_address"),
                 kategoriya=data.get("kategoriya"),
                 dokon_turi=data.get("dokon_turi"),
                 distributor=data.get("distributor"),
-                agent_kod=data.get("agent_kod"),
-                vizit_kun=data.get("vizit_kun"),
-                chastota=data.get("chastota"),
-                limit_summa=data.get("limit_summa"),
-                brendlar=data.get("brendlar"),
+                agent_kod=data.get("agent_vizit"),
+                vizit_kun="",
+                chastota="",
+                limit_summa=data.get("limit_text"),
+                brendlar="",
                 supervisor_id=supervisor_id,
             )
 
             await query.edit_message_text("✅ Klient muvaffaqiyatli qo'shildi!")
 
+            # ── Audit log ─────────────────────────────────────
+            _uid = query.from_user.id
+            if _uid == ADMIN_ID:
+                _role = "admin"
+            else:
+                _xrow = await db.get_xodim(_uid)
+                _role = {
+                    "Agent": "agent", "Supervisor": "supervisor",
+                    "Filial Rahbari": "filial_rahbari",
+                }.get(_xrow[3] if _xrow else "", "supervisor")
             try:
-                supervisor = await db.get_xodim(supervisor_id)
-                supervisor_name = supervisor[2] if supervisor else "Unknown"
-
-                admin_card = (
-                    f"📋 *Yangi Klient #{klient_id}*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🏢 Firma: {em(data['firma_nomi'])}\n"
-                    f"📱 Tel 1: {em(data['telefon1'])}\n"
-                    f"📱 Tel 2: {em(data.get('telefon2') or '—')}\n"
-                    f"🔢 INN: {em(data['inn'])}\n"
-                    f"📍 Orienter: {em(data['orienter'])}\n"
-                    f"🗂 Kategoriya: {em(data['kategoriya'])}\n"
-                    f"🏪 Do'kon turi: {em(data['dokon_turi'])}\n"
-                    f"👤 Distributor: {em(data['distributor'])}\n"
-                    f"👨 Agent: {em(data['agent_kod'])}\n"
-                    f"📅 Vizit: {em(data['vizit_kun'])}\n"
-                    f"🔄 Chastota: {em(data['chastota'])}\n"
-                    f"💰 Limit: {em(str(int(data['limit_summa'])))}\n"
-                    f"🏷 Brendlar: {em(data['brendlar'])}\n"
-                    f"👤 Supervisor: {em(supervisor_name)}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                await db.insert_audit_log(
+                    user_id=_uid,
+                    user_role=_role,
+                    action_type="dokon_qoshish",
+                    target=data.get("firma_nomi"),
+                    old_value=None,
+                    new_value=data.get("telefon1"),
+                    status="pending",
+                    request_id=klient_id,
                 )
+            except Exception as _e:
+                logger.warning(f"Audit log yozishda xato (dokon_qoshish): {_e}")
+            # ──────────────────────────────────────────────────
 
+            supervisor_name = await _get_supervisor_name(supervisor_id, context)
+            lokatsiya = _format_lokatsiya(data)
+
+            admin_card = (
+                f"📋 *Yangi Klient #{klient_id}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏢 Firma: {em(data['firma_nomi'])}\n"
+                f"📱 Tel 1: {em(data['telefon1'])}\n"
+                f"📱 Tel 2: {em(data.get('telefon2') or '—')}\n"
+                f"🔢 INN: {em(data.get('inn') or '—')}\n"
+                f"📍 Orienter: {em(data['orienter'])}\n"
+                f"📌 Lokatsiya: {em(lokatsiya)}\n"
+                f"🗂 Kategoriya: {em(data['kategoriya'])}\n"
+                f"🏪 Do'kon turi: {em(data['dokon_turi'])}\n"
+                f"👤 Distributor: {em(data['distributor'])}\n"
+                f"👨 Agent kodi: {em(data['agent_vizit'])} — 📍 {em(data.get('agent_region', ''))}\n"
+                f"💰 Limit: {em(data['limit_text'])}\n"
+                f"👤 Supervisor: {em(supervisor_name)}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+
+            try:
+                from keyboards import klient_approval_kb
+                appr_kb = klient_approval_kb(klient_id)
                 if data.get("rasm_file_id"):
-                    await context.bot.send_photo(
-                        chat_id=ADMIN_ID,
-                        photo=data["rasm_file_id"],
-                        caption=admin_card,
-                        parse_mode="Markdown",
-                    )
+                    if len(admin_card) <= 1024:
+                        await context.bot.send_photo(
+                            chat_id=ADMIN_ID,
+                            photo=data["rasm_file_id"],
+                            caption=admin_card,
+                            parse_mode="Markdown",
+                            reply_markup=appr_kb,
+                        )
+                    else:
+                        await context.bot.send_photo(chat_id=ADMIN_ID, photo=data["rasm_file_id"])
+                        await context.bot.send_message(
+                            chat_id=ADMIN_ID, text=admin_card,
+                            parse_mode="Markdown", reply_markup=appr_kb,
+                        )
                 else:
                     await context.bot.send_message(
-                        chat_id=ADMIN_ID,
-                        text=admin_card,
-                        parse_mode="Markdown",
+                        chat_id=ADMIN_ID, text=admin_card,
+                        parse_mode="Markdown", reply_markup=appr_kb,
                     )
             except Exception as e:
                 logger.warning(f"Admin xabari yuborishda xato: {e}")
+
+            # General topic (message_thread_id=1) ga to'liq klient kartasi
+            group_card = (
+                f"🏪 *Yangi Klient #{klient_id}*\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"🏢 {em(data['firma_nomi'])}\n"
+                f"📱 {em(data['telefon1'])}\n"
+                f"📍 {em(data['orienter'])}\n"
+                f"📌 {em(lokatsiya)}\n"
+                f"🗂 {em(data['kategoriya'])}\n"
+                f"🏪 {em(data['dokon_turi'])}\n"
+                f"👤 Distributor: {em(data['distributor'])}\n"
+                f"👨 Agent kodi: {em(data['agent_vizit'])} — 📍 {em(data.get('agent_region', ''))}\n"
+                f"💰 Limit: {em(data['limit_text'])}\n"
+                f"👤 Supervisor: {em(supervisor_name)}\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"⏳ Kutilmoqda"
+            )
+            try:
+                if data.get("rasm_file_id"):
+                    if len(group_card) <= 1024:
+                        await context.bot.send_photo(
+                            chat_id=GROUP_CHAT_ID,
+                                photo=data["rasm_file_id"],
+                            caption=group_card,
+                            parse_mode="Markdown",
+                        )
+                    else:
+                        await context.bot.send_photo(chat_id=GROUP_CHAT_ID, photo=data["rasm_file_id"])
+                        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=group_card, parse_mode="Markdown")
+                else:
+                    await context.bot.send_message(
+                        chat_id=GROUP_CHAT_ID,
+                        text=group_card,
+                        parse_mode="Markdown",
+                    )
+            except Exception as e:
+                logger.warning(f"General topic ga klient xabari yuborishda xato: {e}")
 
             context.user_data.clear()
         except Exception as e:
@@ -2246,7 +2631,7 @@ async def klient_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "klient_cancel":
         context.user_data.clear()
-        await query.edit_message_text("❌ Qayta boshlaylik. Ismingizni kiriting:")
+        await query.edit_message_text("❌ Klient registratsiyasi bekor qilindi.")
         return ConversationHandler.END
 
 
@@ -2255,18 +2640,19 @@ async def klient_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════════════════════════════════
 @admin_only
 async def admin_klientlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin - barcha klientlarni ko'rish."""
-    rows = await db.get_all_klientlar()
-    if not rows:
-        await update.message.reply_text("🏪 Klientlar mavjud emas.")
-        return
-
-    total = len(rows)
-    matn = f"🏪 *Klientlar* ({total} ta)\n\n"
-    matn += "_Profil ko'rish uchun klientni bosing:_"
-
-    from keyboards import klientlar_page_inline
-    await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=klientlar_page_inline(rows, 0))
+    """Admin - klientlar statistikasi."""
+    from keyboards import klientlar_stats_kb
+    stats = await db.get_klientlar_stats()
+    matn = (
+        f"🏪 *Klientlar*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📊 Jami: *{stats['total']}* ta\n"
+        f"⏳ Kutilmoqda: *{stats['pending']}* ta\n"
+        f"✅ Tasdiqlangan: *{stats['approved']}* ta\n"
+        f"❌ Rad etilgan: *{stats['rejected']}* ta\n"
+        f"━━━━━━━━━━━━━━━"
+    )
+    await update.message.reply_text(matn, parse_mode="Markdown", reply_markup=klientlar_stats_kb())
 
 
 async def _show_klient_profile_admin(send_fn, klient_id: int, context=None):
@@ -2278,24 +2664,29 @@ async def _show_klient_profile_admin(send_fn, klient_id: int, context=None):
 
     cols = ("id", "rasm", "firma_nomi", "telefon1", "telefon2", "inn", "orienter",
             "lat", "lon", "kategoriya", "dokon_turi", "distributor", "agent_kod",
-            "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id")
+            "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id",
+            "lokatsiya_address")
     data = dict(zip(cols, klient))
+
+    lat, lon = data.get("lat"), data.get("lon")
+    if lat is not None and lon is not None:
+        lokatsiya = f"{lat:.6f}, {lon:.6f}"
+    else:
+        lokatsiya = data.get("lokatsiya_address") or "—"
 
     profile = (
         f"🏪 *Klient Profili*\n\n"
         f"📝 Firma: {em(data['firma_nomi'])}\n"
         f"📱 Tel 1: {em(data['telefon1'])}\n"
         f"📱 Tel 2: {em(data['telefon2'] or '—')}\n"
-        f"🔢 INN: {em(data['inn'])}\n"
+        f"🔢 INN: {em(data['inn'] or '—')}\n"
         f"📍 Orienter: {em(data['orienter'])}\n"
+        f"📌 Lokatsiya: {em(lokatsiya)}\n"
         f"🏪 Kategoriya: {em(data['kategoriya'])}\n"
         f"🏢 Do'kon turi: {em(data['dokon_turi'])}\n"
         f"🚚 Distributor: {em(data['distributor'])}\n"
-        f"👤 Agent kodi: {em(data['agent_kod'])}\n"
-        f"📅 Vizit: {em(data['vizit_kun'])}\n"
-        f"🔄 Chastota: {em(data['chastota'])}\n"
+        f"👨 Agent/Vizit: {em(data['agent_kod'])}\n"
         f"💰 Limit: {em(str(data['limit']))}\n"
-        f"🏷️ Brendlar: {em(data['brendlar'])}\n"
         f"📊 Holat: {em(data['status'])}\n"
     )
 
@@ -2339,7 +2730,7 @@ async def klient_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         sup_id = klient[20]
         await context.bot.send_message(
             chat_id=sup_id,
-            text=f"✅ Do'koningiz *{em(klient[2])}* tasdiqlandi! Yangi klientni boshqarish uchun /start bosing.",
+            text=f"✅ Klientingiz *{em(klient[2])}* tasdiqlandi!",
             parse_mode="Markdown",
         )
     except Exception as e:
@@ -2360,14 +2751,57 @@ async def klient_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
         "❌ *Rad etish sababini yozing:*\n\n"
         "_Masalan: Noto'g'ri ma'lumot, duplikat, boshqa sabab_",
         parse_mode="Markdown",
-        reply_markup=remove_kb(),
     )
 
 
 async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Klientni rad etish."""
+    """Klientni rad etish, klient qidirish va sorov javobini yuborish."""
     if update.effective_user.id != ADMIN_ID:
-        return  # Only admins can reject clients
+        return
+
+    # Check if admin is replying to a sorov message
+    from sorov_handlers import handle_admin_sorov_reply
+    if await handle_admin_sorov_reply(update, context):
+        return
+
+    # Handle supervisor group assignment
+    pending_setgroup = context.user_data.get("pending_setgroup_uid")
+    if pending_setgroup:
+        context.user_data.pop("pending_setgroup_uid", None)
+        text = update.message.text.strip()
+        if text.lstrip("-").isdigit():
+            group_chat_id = int(text)
+            await db.set_supervisor_group(pending_setgroup, group_chat_id)
+            row = await db.get_xodim(pending_setgroup)
+            ism = row[2] if row else str(pending_setgroup)
+            await update.message.reply_text(
+                f"✅ *{em(ism)}* uchun guruh belgilandi: `{group_chat_id}`",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Noto'g'ri format. Guruh ID raqam bo'lishi kerak.\n"
+                "_Masalan: -1001234567890_",
+                parse_mode="Markdown",
+            )
+        return
+
+    # Handle klient search input
+    if context.user_data.get("awaiting_klient_search"):
+        context.user_data.pop("awaiting_klient_search", None)
+        q = update.message.text.strip()
+        context.user_data["klient_search_query"] = q
+        results = await db.search_klientlar(q)
+        context.user_data["klient_search_results"] = results
+        if not results:
+            await update.message.reply_text(f"🔍 *'{em(q)}'* bo'yicha hech narsa topilmadi.", parse_mode="Markdown")
+            return
+        await update.message.reply_text(
+            f"🔍 *'{em(q)}' bo'yicha natijalar* ({len(results)} ta)",
+            parse_mode="Markdown",
+            reply_markup=klientlar_search_page_inline(results, 0),
+        )
+        return
 
     klient_id = context.user_data.get("klient_reject_id")
 
@@ -2378,6 +2812,7 @@ async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
     klient = await db.get_klient(klient_id)
     if not klient:
         await update.message.reply_text("❌ Klient topilmadi.")
+        context.user_data.pop("klient_reject_id", None)
         return
 
     await db.reject_klient(klient_id, reason)
@@ -2394,3 +2829,118 @@ async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.warning(f"Supervisor xabari yuborishda xato: {e}")
 
     context.user_data.pop("klient_reject_id", None)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# MENING KLIENTLARIM — xodim o'z klientlarini ko'rish
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+async def mening_klientlarim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid == ADMIN_ID:
+        rows = await db.get_all_klientlar()
+    else:
+        rows = await db.get_klientlar_by_supervisor(uid)
+
+    context.user_data["mk_rows"] = rows
+
+    if not rows:
+        await update.message.reply_text("🏪 Hozircha klientlar yo'q.")
+        return
+
+    await update.message.reply_text(
+        f"🏪 *Mening Klientlarim* ({len(rows)} ta)\n\n_Batafsil ko'rish uchun bosing:_",
+        parse_mode="Markdown",
+        reply_markup=mening_klientlar_kb(rows, 0),
+    )
+
+
+async def mk_page_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "mk_noop":
+        return
+
+    page = safe_callback_int(query.data, "_", 2)
+    if page is None:
+        return
+
+    rows = context.user_data.get("mk_rows")
+    if not rows:
+        uid = query.from_user.id
+        if uid == ADMIN_ID:
+            rows = await db.get_all_klientlar()
+        else:
+            rows = await db.get_klientlar_by_supervisor(uid)
+        context.user_data["mk_rows"] = rows
+
+    if not rows:
+        await query.edit_message_text("🏪 Hozircha klientlar yo'q.")
+        return
+
+    await query.edit_message_text(
+        f"🏪 *Mening Klientlarim* ({len(rows)} ta)\n\n_Batafsil ko'rish uchun bosing:_",
+        parse_mode="Markdown",
+        reply_markup=mening_klientlar_kb(rows, page),
+    )
+
+
+async def mk_view_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    # callback_data: mk_view_{klient_id}_{back_page}
+    parts = query.data.split("_")
+    try:
+        klient_id = int(parts[2])
+        back_page = int(parts[3])
+    except (IndexError, ValueError):
+        return
+
+    klient = await db.get_klient(klient_id)
+    if not klient:
+        await query.answer("❌ Klient topilmadi.", show_alert=True)
+        return
+
+    cols = ("id", "rasm", "firma_nomi", "telefon1", "telefon2", "inn", "orienter",
+            "lat", "lon", "kategoriya", "dokon_turi", "distributor", "agent_kod",
+            "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id",
+            "lokatsiya_address")
+    data = dict(zip(cols, klient))
+
+    lat, lon = data.get("lat"), data.get("lon")
+    if lat is not None and lon is not None:
+        lokatsiya = f"{lat:.6f}, {lon:.6f}"
+    else:
+        lokatsiya = data.get("lokatsiya_address") or "—"
+
+    status_icon = "✅" if data["status"] == "approved" else "⏳" if data["status"] == "pending" else "❌"
+
+    profile = (
+        f"🏪 *Klient #{data['id']}*\n\n"
+        f"📝 Firma: {em(data['firma_nomi'])}\n"
+        f"📱 Tel 1: {em(data['telefon1'])}\n"
+        f"📱 Tel 2: {em(data.get('telefon2') or '—')}\n"
+        f"🔢 INN: {em(data.get('inn') or '—')}\n"
+        f"📍 Orienter: {em(data['orienter'])}\n"
+        f"📌 Lokatsiya: {em(lokatsiya)}\n"
+        f"🏪 Kategoriya: {em(data['kategoriya'])}\n"
+        f"🏢 Do'kon turi: {em(data['dokon_turi'])}\n"
+        f"🚚 Distributor: {em(data['distributor'])}\n"
+        f"👨 Agent/Vizit: {em(data['agent_kod'])}\n"
+        f"💰 Limit: {em(str(data['limit']))}\n"
+        f"{status_icon} Holat: {em(data['status'])}\n"
+    )
+
+    back_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Ro'yxatga qaytish", callback_data=f"mk_page_{back_page}")
+    ]])
+
+    if data.get("rasm"):
+        try:
+            await context.bot.send_photo(chat_id=query.message.chat_id, photo=data["rasm"])
+        except Exception as e:
+            logger.warning(f"Klient rasm yuborishda xato: {e}")
+
+    await query.edit_message_text(profile, parse_mode="Markdown", reply_markup=back_kb)

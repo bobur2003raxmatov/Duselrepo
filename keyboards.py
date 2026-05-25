@@ -1,8 +1,14 @@
+import re
+
 from telegram import (
     ReplyKeyboardMarkup, ReplyKeyboardRemove,
     KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton,
 )
 from config import FILIALLAR, LAVOZIMLAR, PAGE_SIZE
+
+
+def _dokon_slug(name: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
 
 
 def lavozim_kb() -> ReplyKeyboardMarkup:
@@ -24,8 +30,11 @@ def filial_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
-def telefon_kb() -> ReplyKeyboardRemove:
-    return ReplyKeyboardRemove()
+def telefon_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("📱 Raqamni ulashish", request_contact=True)]],
+        resize_keyboard=True, one_time_keyboard=True,
+    )
 
 
 def telefon2_kb() -> ReplyKeyboardMarkup:
@@ -39,14 +48,70 @@ def remove_kb() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
-def xodim_kb() -> ReplyKeyboardMarkup:
+
+def excel_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Xodimlar hisoboti",      callback_data="excel_xodimlar")],
+        [InlineKeyboardButton("🏪 Ochilgan klientlar Excel", callback_data="excel_klientlar")],
+    ])
+
+
+def klientlar_stats_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔍 Klient qidirish", callback_data="klient_search_start")],
+    ])
+
+
+def agent_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["❓ So'rov"]],
+        resize_keyboard=True,
+    )
+
+
+def supervisor_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["🏪 Yangi Klient", "📝 Muammo yozish"]],
+        resize_keyboard=True,
+    )
+
+
+def filial_rahbari_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
-            ["🏪 Yangi Klient"],
-            ["❓ Ko'p So'raladigan Savollar"],
+            ["🏪 Dokon qo'shish"],
+            ["💰 Limit qo'shish", "📝 Muammo yozish"],
         ],
         resize_keyboard=True,
     )
+
+
+def batch_collect_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([["📤 Yuborish"]], resize_keyboard=True)
+
+
+def batch_preview_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Tasdiqlash va yuborish",    callback_data="batch_confirm")],
+        [InlineKeyboardButton("✏️ Tahrirlash (yana qo'shish)", callback_data="batch_edit")],
+        [InlineKeyboardButton("❌ Bekor qilish",               callback_data="batch_cancel")],
+    ])
+
+
+def sorov_tur_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📍 Dokon lokatsiyasini o'zgartirish", callback_data="sorov_tur_lokatsiya")],
+        [InlineKeyboardButton("📞 Dokon raqamini o'zgartirish",      callback_data="sorov_tur_telefon")],
+        [InlineKeyboardButton("🖼 Vizitda muammo",                    callback_data="sorov_tur_vizit")],
+        [InlineKeyboardButton("💬 Boshqa muammo",                    callback_data="sorov_tur_boshqa")],
+    ])
+
+
+def sorov_tasdiqlash_kb(sorov_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"sorov_appr_{sorov_id}"),
+        InlineKeyboardButton("❌ Rad etish",  callback_data=f"sorov_rej_{sorov_id}"),
+    ]])
 
 
 def admin_kb() -> ReplyKeyboardMarkup:
@@ -54,38 +119,40 @@ def admin_kb() -> ReplyKeyboardMarkup:
         [
             ["📊 Statistika",              "👥 Xodimlar"],
             ["⏳ Kutilayotgan so'rovlar",  "🚫 Bloklanganlar"],
-            ["📝 Xodimni Tahrirlash",      "📥 Excel"],
-            ["🔍 Xodim Qidirish",          "🔗 Biriktirish"],
-            ["⭐ Agent Reytingi",           "🏆 Filial Reytingi"],
-            ["🏪 Klientlar"],
+            ["📥 Excel",                   "🔗 Biriktirish"],
+            ["🏪 Yangi Klient",            "🏪 Klientlar"],
+            ["🏆 Reyting",                 "📋 Tarix"],
         ],
         resize_keyboard=True,
     )
 
 
-def edit_select_kb(rows: list, page: int) -> InlineKeyboardMarkup:
-    """Paginated employee selector for the edit flow."""
-    total = len(rows)
-    start = page * PAGE_SIZE
-    end   = min(start + PAGE_SIZE, total)
+def tarix_filter_kb(active: str = "all") -> InlineKeyboardMarkup:
+    def _btn(label: str, ft: str) -> InlineKeyboardButton:
+        mark = "• " if ft == active else ""
+        return InlineKeyboardButton(f"{mark}{label}", callback_data=f"tarix_f_{ft}")
+    return InlineKeyboardMarkup([[
+        _btn("Barchasi",      "all"),
+        _btn("Agentlar",      "agent"),
+        _btn("Supervisorlar", "supervisor"),
+        _btn("Rad etilganlar","rejected"),
+    ]])
 
-    buttons = []
-    for r in rows[start:end]:
-        # rows: (ism, lavozim, filial, kod, user_id)
-        buttons.append([InlineKeyboardButton(
-            f"👤 {r[0]} — {r[1]} | {r[2]}",
-            callback_data=f"edit_select_{r[4]}",
-        )])
 
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"edit_page_{page - 1}"))
-    if end < total:
-        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"edit_page_{page + 1}"))
-    if nav:
-        buttons.append(nav)
+def reyting_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🏆 Agent reytingi", callback_data="reyting_agent"),
+            InlineKeyboardButton("🏢 Filial reytingi", callback_data="reyting_filial"),
+        ],
+        [InlineKeyboardButton("🔙 Orqaga", callback_data="reyting_close")],
+    ])
 
-    return InlineKeyboardMarkup(buttons)
+
+def agent_reyting_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 Orqaga", callback_data="reyting_menu"),
+    ]])
 
 
 def edit_field_kb() -> ReplyKeyboardMarkup:
@@ -115,6 +182,31 @@ def xodimlar_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
     if nav:
         buttons.append(nav)
 
+    return InlineKeyboardMarkup(buttons)
+
+
+def xodimlar_edit_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
+    """Unified employee menu with edit buttons."""
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+
+    buttons = []
+    for r in rows[start:end]:
+        buttons.append([
+            InlineKeyboardButton(f"👤 {r[0]} — {r[1]} | {r[2]}", callback_data=f"xodim_info_{r[4]}"),
+            InlineKeyboardButton("✏️ Tahrirlash", callback_data=f"xodim_edit_{r[4]}"),
+        ])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"xodim_list_page_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"xodim_list_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton("🔍 Qidirish", callback_data="xodim_search_start")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -264,12 +356,15 @@ def filial_filter_kb(active: str = "haftalik") -> InlineKeyboardMarkup:
     def btn(label: str, key: str) -> InlineKeyboardButton:
         text = f"▶ {label}" if key == active else label
         return InlineKeyboardButton(text, callback_data=f"filial_lider_{key}")
-    return InlineKeyboardMarkup([[
-        btn("Haftalik", "haftalik"),
-        btn("Oylik",    "oylik"),
-        btn("Yillik",   "yillik"),
-        btn("Hammasi",  "hammasi"),
-    ]])
+    return InlineKeyboardMarkup([
+        [
+            btn("Haftalik", "haftalik"),
+            btn("Oylik",    "oylik"),
+            btn("Yillik",   "yillik"),
+            btn("Hammasi",  "hammasi"),
+        ],
+        [InlineKeyboardButton("🔙 Orqaga", callback_data="reyting_menu")],
+    ])
 
 
 def checker_sorov_kb(group_id: int) -> InlineKeyboardMarkup:
@@ -292,7 +387,7 @@ def search_results_kb(rows: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def xodim_profil_kb(user_id: int, status: str) -> InlineKeyboardMarkup:
+def xodim_profil_kb(user_id: int, status: str, lavozim: str = "") -> InlineKeyboardMarkup:
     buttons = []
     if status == "pending":
         buttons.append([
@@ -304,7 +399,16 @@ def xodim_profil_kb(user_id: int, status: str) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton("🚫 Bloklash", callback_data=f"block_{user_id}")])
     elif status == "blocked":
         buttons.append([InlineKeyboardButton("🔓 Blokdan ochish", callback_data=f"unbl_{user_id}")])
+    if lavozim in ("Supervisor", "Filial Rahbari"):
+        buttons.append([InlineKeyboardButton("🔗 Guruh belgilash", callback_data=f"xodim_setgroup_{user_id}")])
     return InlineKeyboardMarkup(buttons)
+
+
+def limit_appr_rej_kb(sorov_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"limit_appr_{sorov_id}"),
+        InlineKeyboardButton("❌ Rad etish",  callback_data=f"limit_rej_{sorov_id}"),
+    ]])
 
 
 def pending_xodimlar_inline(rows: list, page: int) -> InlineKeyboardMarkup:
@@ -363,15 +467,22 @@ def unblock_inline(user_id: int) -> InlineKeyboardMarkup:
 # KLIENT REGISTRATSIYA KLAVIATURALARI
 # ═══════════════════════════════════════════════════════════════════════════════════
 
+def klient_lokatsiya_inline_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📍 GPS joylashuv ulashish", callback_data="lok_gps")],
+        [InlineKeyboardButton("✏️ Manzilni qo'lda kiritish", callback_data="lok_text")],
+    ])
+
+
 def klient_kategoriya_kb() -> InlineKeyboardMarkup:
     from config import DOKON_TURLARI
-    buttons = [[InlineKeyboardButton(cat, callback_data=f"klient_kat_{i}")] for i, cat in enumerate(DOKON_TURLARI)]
+    buttons = [[InlineKeyboardButton(cat, callback_data=f"klient_kat_{_dokon_slug(cat)}")] for cat in DOKON_TURLARI]
     return InlineKeyboardMarkup(buttons)
 
 
 def klient_dokon_turi_kb() -> InlineKeyboardMarkup:
     from config import DOKON_TURLARI
-    buttons = [[InlineKeyboardButton(tur, callback_data=f"klient_tur_{i}")] for i, tur in enumerate(DOKON_TURLARI)]
+    buttons = [[InlineKeyboardButton(tur, callback_data=f"klient_tur_{_dokon_slug(tur)}")] for tur in DOKON_TURLARI]
     return InlineKeyboardMarkup(buttons)
 
 
@@ -388,7 +499,7 @@ def klient_chastota_kb() -> InlineKeyboardMarkup:
 
 
 def klient_distributor_kb(distributors: list) -> InlineKeyboardMarkup:
-    buttons = [[InlineKeyboardButton(d[0], callback_data=f"klient_dist_{d[4]}")] for d in distributors]
+    buttons = [[InlineKeyboardButton(f"{d[0]} ({d[2]})", callback_data=f"klient_dist_{d[4]}")] for d in distributors]
     buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="klient_cancel")])
     return InlineKeyboardMarkup(buttons)
 
@@ -421,7 +532,7 @@ def klient_brendlar_kb_selected(selected: list) -> InlineKeyboardMarkup:
 def klient_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Tasdiqlash", callback_data="klient_submit")],
-        [InlineKeyboardButton("✏️ Qayta toldirish", callback_data="klient_cancel")],
+        [InlineKeyboardButton("❌ Bekor qilish", callback_data="klient_cancel")],
     ])
 
 
@@ -446,6 +557,32 @@ def klientlar_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
     if nav:
         buttons.append(nav)
 
+    buttons.append([InlineKeyboardButton("🔍 Klient qidirish", callback_data="klient_search_start")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def klientlar_search_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
+    total = len(rows)
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+
+    buttons = []
+    for r in rows[start:end]:
+        status_icon = "✅" if r[17] == "approved" else "⏳" if r[17] == "pending" else "❌"
+        buttons.append([InlineKeyboardButton(
+            f"{status_icon} {r[2]} | {r[11]} | INN: {r[5]}",
+            callback_data=f"klient_view_{r[0]}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"klientlar_search_page_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"klientlar_search_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton("🔍 Yangi qidirish", callback_data="klient_search_start")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -454,3 +591,28 @@ def klient_approval_kb(klient_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"klient_approve_{klient_id}")],
         [InlineKeyboardButton("❌ Rad etish", callback_data=f"klient_reject_{klient_id}")],
     ])
+
+
+def mening_klientlar_kb(rows: list, page: int, page_size: int = 5) -> InlineKeyboardMarkup:
+    total = len(rows)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = page * page_size
+    end = min(start + page_size, total)
+
+    buttons = []
+    for r in rows[start:end]:
+        status_icon = "✅" if r[17] == "approved" else "⏳" if r[17] == "pending" else "❌"
+        buttons.append([InlineKeyboardButton(
+            f"{status_icon} {r[2]} | {r[3]}",
+            callback_data=f"mk_view_{r[0]}_{page}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"mk_page_{page - 1}"))
+    nav.append(InlineKeyboardButton(f"Sahifa {page + 1}/{total_pages}", callback_data="mk_noop"))
+    if end < total:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"mk_page_{page + 1}"))
+    buttons.append(nav)
+
+    return InlineKeyboardMarkup(buttons)

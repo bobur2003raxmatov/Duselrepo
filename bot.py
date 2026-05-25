@@ -20,14 +20,17 @@ from telegram.ext import (
 from config import (
     TOKEN, GROUP_CHAT_ID,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
-    EDIT_USER, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
+    XODIM_LIST, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
-    BIRIKTIR_EDIT_FIELD, BIRIKTIR_EDIT_VALUE,
+    BIRIKTIR_EDIT_VALUE,
     KLIENT_RASM, KLIENT_FIRMA_NOMI, KLIENT_TELEFON1, KLIENT_TELEFON2,
     KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
     KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
-    KLIENT_VIZIT_KUN, KLIENT_CHASTOTA, KLIENT_LIMIT, KLIENT_BRENDLAR,
-    KLIENT_CONFIRM,
+    KLIENT_LIMIT, KLIENT_CONFIRM,
+    SOROV_TUR, SOROV_DOKON, SOROV_LOK, SOROV_TEL,
+    SOROV_FOTO, SOROV_IZOH,
+    SOROV_BATCH_COLLECT, SOROV_BATCH_PREVIEW,
+    LIMIT_DOKON, LIMIT_SUMMA,
 )
 from database import init_db
 from utils import daily_report_job, weekly_report_job, agent_reminder_job
@@ -43,20 +46,32 @@ from handlers import (
     admin_statistika, admin_xodimlar,
     admin_kutilayotganlar, admin_bloklanganlar,
     admin_excel_eksport,
-    admin_search, search_query_handler,
+    search_query_handler,
     admin_biriktirish,
     biriktir_list_cb, biriktir_new_cb, biriktir_agent_cb, biriktir_back_cb,
     biriktir_change_cb, biriktir_rm_cb, biriktir_block_cb,
     biriktir_edit_field_cb, biriktir_edit_value_handler,
     biriktir_checker_cb,
-    admin_agent_reyting, admin_filial_lider,
-    start_edit, edit_page, edit_select_user, edit_search, edit_field, edit_value,
+    admin_reyting_menu,
+    edit_field, edit_value,
+    _xodim_list_page_cb, _xodim_info_cb, _xodim_edit_cb, _xodim_search_start_cb,
     new_client_command, klient_rasm, klient_firma_nomi, klient_telefon1,
-    klient_telefon2, klient_inn, klient_orienter, klient_lokatsiya, klient_kategoriya,
-    klient_dokon_turi, klient_distributor, klient_agent_kod, klient_vizit_kun,
-    klient_chastota, klient_limit, klient_brendlar, klient_confirm,
-    admin_klientlar, klient_view_callback, klient_approve_callback, klient_reject_callback,
+    klient_telefon2, klient_inn, klient_orienter,
+    klient_lokatsiya, klient_kategoriya,
+    klient_dokon_turi, klient_distributor, klient_agent_kod,
+    klient_limit, klient_confirm,
+    admin_klientlar,
     klient_reject_reason,
+    admin_tarix, tarix_filter_callback,
+)
+from sorov_handlers import (
+    sorov_start, sorov_tur_olish,
+    sorov_dokon_olish, sorov_lok_olish, sorov_tel_olish,
+    sorov_foto_olish, sorov_izoh_olish,
+    batch_collect_handler, batch_callback,
+    sorov_sup_callback,
+    limit_start, limit_dokon_olish, limit_summa_olish,
+    instruksiya_cmd,
 )
 
 # ── Logging: console + file ───────────────────────────────────────
@@ -64,7 +79,6 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     level=logging.INFO,
     handlers=[
-        logging.StreamHandler(),
         logging.FileHandler("bot.log", encoding="utf-8"),
     ],
 )
@@ -84,7 +98,10 @@ def build_application() -> Application:
             LAVOZIM:      [MessageHandler(filters.TEXT & ~filters.COMMAND, lavozim_olish)],
             KOD:          [MessageHandler(filters.TEXT & ~filters.COMMAND, kod_olish)],
             FILIAL:       [MessageHandler(filters.TEXT & ~filters.COMMAND, filial_olish)],
-            TELEFON:      [MessageHandler(filters.CONTACT, telefon_olish)],
+            TELEFON:      [
+                MessageHandler(filters.CONTACT, telefon_olish),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, telefon_olish),
+            ],
             TELEFON2:     [
                 MessageHandler(filters.CONTACT, telefon2_olish),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, telefon2_olish),
@@ -95,31 +112,29 @@ def build_application() -> Application:
         allow_reentry=True,
     )
 
-    # ── Xodimni tahrirlash ConversationHandler ───────────────────
-    tahrir_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r"^📝 Xodimni Tahrirlash$"), start_edit)],
+    # ── Unified Employee Management ConversationHandler ──────────────
+    xodim_mgmt_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex(r"^👥 Xodimlar$"), admin_xodimlar)],
         states={
-            EDIT_USER: [
-                CallbackQueryHandler(edit_select_user, pattern="^edit_select_"),
-                CallbackQueryHandler(edit_page,        pattern="^edit_page_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_search),
+            XODIM_LIST: [
+                CallbackQueryHandler(_xodim_edit_cb, pattern="^xodim_edit_"),
+                CallbackQueryHandler(_xodim_list_page_cb, pattern="^xodim_list_page_"),
+                CallbackQueryHandler(_xodim_info_cb, pattern="^xodim_info_"),
+                CallbackQueryHandler(_xodim_search_start_cb, pattern="^xodim_search_start$"),
             ],
-            EDIT_FIELD: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_field)],
-            EDIT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value)],
+            EDIT_FIELD: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_field),
+            ],
+            EDIT_VALUE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value),
+            ],
+            SEARCH_QUERY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, search_query_handler),
+            ],
         },
         fallbacks=[cancel_cmd, CommandHandler("start", start)],
         allow_reentry=True,
         per_message=False,
-    )
-
-    # ── Xodim qidirish ConversationHandler ──────────────────────
-    qidiruv_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r"^🔍 Xodim Qidirish$"), admin_search)],
-        states={
-            SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_query_handler)],
-        },
-        fallbacks=[cancel_cmd, CommandHandler("start", start)],
-        allow_reentry=True,
     )
 
     # ── Biriktirish ConversationHandler (to'liq agent boshqaruv) ─
@@ -154,7 +169,8 @@ def build_application() -> Application:
     # ── Klient registratsiya ConversationHandler (16 qadam) ──────
     klient_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^🏪 Yangi Klient$"), new_client_command),
+            MessageHandler(filters.Regex(r"^🏪 Yangi Klient$"),   new_client_command),
+            MessageHandler(filters.Regex(r"^🏪 Dokon qo'shish$"), new_client_command),
             CommandHandler("new_client", new_client_command),
         ],
         states={
@@ -173,13 +189,45 @@ def build_application() -> Application:
             ],
             KLIENT_KATEGORIYA:  [CallbackQueryHandler(klient_kategoriya, pattern="^klient_kat_")],
             KLIENT_DOKON_TURI:  [CallbackQueryHandler(klient_dokon_turi, pattern="^klient_tur_")],
-            KLIENT_DISTRIBUTOR: [CallbackQueryHandler(klient_distributor, pattern="^klient_dist_")],
-            KLIENT_AGENT_KOD:   [CallbackQueryHandler(klient_agent_kod, pattern="^klient_agent_")],
-            KLIENT_VIZIT_KUN:   [CallbackQueryHandler(klient_vizit_kun, pattern="^klient_kun_")],
-            KLIENT_CHASTOTA:    [CallbackQueryHandler(klient_chastota, pattern="^klient_chas_")],
+            KLIENT_DISTRIBUTOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_distributor)],
+            KLIENT_AGENT_KOD:   [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_agent_kod)],
             KLIENT_LIMIT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_limit)],
-            KLIENT_BRENDLAR:    [CallbackQueryHandler(klient_brendlar, pattern="^klient_brand_|^klient_brands_confirm|^klient_cancel$")],
-            KLIENT_CONFIRM:     [CallbackQueryHandler(klient_confirm, pattern="^klient_submit|^klient_cancel$")],
+            KLIENT_CONFIRM:     [CallbackQueryHandler(klient_confirm, pattern="^klient_submit$|^klient_cancel$")],
+        },
+        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        allow_reentry=True,
+        per_message=False,
+    )
+
+    # ── So'rov ConversationHandler (agent/FR/supervisor requests) ──
+    sorov_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex(r"^❓ So'rov$"),       sorov_start),
+            MessageHandler(filters.Regex(r"^📝 Muammo yozish$"), sorov_start),
+        ],
+        states={
+            SOROV_TUR:  [CallbackQueryHandler(sorov_tur_olish, pattern="^sorov_tur_")],
+            SOROV_DOKON:[MessageHandler(filters.TEXT & ~filters.COMMAND, sorov_dokon_olish)],
+            SOROV_LOK:  [MessageHandler(filters.LOCATION, sorov_lok_olish)],
+            SOROV_TEL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, sorov_tel_olish)],
+            SOROV_FOTO: [MessageHandler(filters.PHOTO, sorov_foto_olish)],
+            SOROV_IZOH: [MessageHandler(filters.TEXT & ~filters.COMMAND, sorov_izoh_olish)],
+            SOROV_BATCH_COLLECT: [MessageHandler(filters.ALL & ~filters.COMMAND, batch_collect_handler)],
+            SOROV_BATCH_PREVIEW: [CallbackQueryHandler(batch_callback, pattern="^batch_")],
+        },
+        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        allow_reentry=True,
+        per_message=False,
+    )
+
+    # ── Limit qo'shish ConversationHandler (Filial Rahbari) ─────
+    limit_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex(r"^💰 Limit qo'shish$"), limit_start),
+        ],
+        states={
+            LIMIT_DOKON: [MessageHandler(filters.TEXT & ~filters.COMMAND, limit_dokon_olish)],
+            LIMIT_SUMMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, limit_summa_olish)],
         },
         fallbacks=[cancel_cmd, CommandHandler("start", start)],
         allow_reentry=True,
@@ -187,28 +235,41 @@ def build_application() -> Application:
     )
 
     app.add_handler(royxat_conv)
-    app.add_handler(tahrir_conv)
-    app.add_handler(qidiruv_conv)
+    app.add_handler(xodim_mgmt_conv)
     app.add_handler(biriktir_conv)
     app.add_handler(klient_conv)
+    app.add_handler(sorov_conv)
+    app.add_handler(limit_conv)
     app.add_handler(cancel_cmd)
 
-    app.add_handler(MessageHandler(filters.Regex(r"^⭐ Agent Reytingi$"),          admin_agent_reyting))
-    app.add_handler(MessageHandler(filters.Regex(r"^🏆 Filial Reytingi$"),         admin_filial_lider))
+    app.add_handler(CommandHandler("instruksiya", instruksiya_cmd))
+
+    app.add_handler(MessageHandler(filters.Regex(r"^🏆 Reyting$"),                 admin_reyting_menu))
+    app.add_handler(MessageHandler(filters.Regex(r"^📋 Tarix$"),                   admin_tarix))
     app.add_handler(MessageHandler(filters.Regex(r"^📊 Statistika$"),             admin_statistika))
-    app.add_handler(MessageHandler(filters.Regex(r"^👥 Xodimlar$"),               admin_xodimlar))
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
     app.add_handler(MessageHandler(filters.Regex(r"^🏪 Klientlar$"),              admin_klientlar))
     app.add_handler(MessageReactionHandler(reaction_handler))
 
-    # Klient reject reason handler
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, klient_reject_reason))
-
+    app.add_handler(CallbackQueryHandler(sorov_sup_callback, pattern=r"^sorov_appr_|^sorov_rej_"))
+    app.add_handler(CallbackQueryHandler(tarix_filter_callback, pattern=r"^tarix_f_"))
+    app.add_handler(CallbackQueryHandler(batch_callback, pattern=r"^batch_"))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
+
+    # Klient reject reason — group 1 so it does not steal updates from group 0
+    # (admin_guruh_javob va xodim_chat_handler ishlashi uchun)
+    from config import ADMIN_ID
+    app.add_handler(
+        MessageHandler(
+            filters.User(ADMIN_ID) & ~filters.Chat(GROUP_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            klient_reject_reason,
+        ),
+        group=1,
+    )
 
     return app
 
@@ -216,11 +277,26 @@ def build_application() -> Application:
 async def post_init(app: Application):
     await init_db()
     logger.info("✅ Ma'lumotlar bazasi tayyor.")
-    await app.bot.set_my_commands([
-        BotCommand("start",  "Botni qayta ishga tushirish"),
-        BotCommand("new_client", "Yangi klient registratsiyasi"),
-        BotCommand("cancel", "Jarayonni bekor qilish"),
-    ])
+    from telegram import BotCommandScopeDefault, BotCommandScopeChat
+    from config import ADMIN_ID as _ADMIN_ID
+    # All users see only /start and /cancel
+    await app.bot.set_my_commands(
+        [
+            BotCommand("start",       "Botni qayta ishga tushirish"),
+            BotCommand("instruksiya", "Botdan foydalanish yo'riqnomasi"),
+            BotCommand("cancel",      "Jarayonni bekor qilish"),
+        ],
+        scope=BotCommandScopeDefault(),
+    )
+    # Admin also sees /new_client
+    await app.bot.set_my_commands(
+        [
+            BotCommand("start",      "Botni qayta ishga tushirish"),
+            BotCommand("new_client", "Yangi klient registratsiyasi"),
+            BotCommand("cancel",     "Jarayonni bekor qilish"),
+        ],
+        scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
+    )
     # General topicda faqat adminlar yoza olsin
     try:
         await app.bot.set_chat_permissions(

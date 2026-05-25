@@ -136,30 +136,144 @@ async def init_db():
         # Klientlar jadvali
         await db.execute("""
             CREATE TABLE IF NOT EXISTS klientlar (
-                id             INTEGER PRIMARY KEY AUTOINCREMENT,
-                rasm_file_id   TEXT,
-                firma_nomi     TEXT NOT NULL,
-                telefon1       TEXT NOT NULL,
-                telefon2       TEXT,
-                inn            TEXT UNIQUE,
-                orienter       TEXT NOT NULL,
-                lokatsiya_lat  REAL,
-                lokatsiya_lon  REAL,
-                kategoriya     TEXT NOT NULL,
-                dokon_turi     TEXT NOT NULL,
-                distributor    TEXT NOT NULL,
-                agent_kod      TEXT NOT NULL,
-                vizit_kun      TEXT NOT NULL,
-                chastota       TEXT NOT NULL,
-                limit_summa    REAL NOT NULL,
-                brendlar       TEXT,
-                status         TEXT DEFAULT 'pending',
-                reject_reason  TEXT,
-                sana           TEXT,
-                supervisor_id  INTEGER NOT NULL
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                rasm_file_id      TEXT,
+                firma_nomi        TEXT NOT NULL,
+                telefon1          TEXT NOT NULL,
+                telefon2          TEXT,
+                inn               TEXT UNIQUE,
+                orienter          TEXT NOT NULL,
+                lokatsiya_lat     REAL,
+                lokatsiya_lon     REAL,
+                kategoriya        TEXT NOT NULL,
+                dokon_turi        TEXT NOT NULL,
+                distributor       TEXT NOT NULL,
+                agent_kod         TEXT NOT NULL,
+                vizit_kun         TEXT NOT NULL,
+                chastota          TEXT NOT NULL,
+                limit_summa       REAL NOT NULL,
+                brendlar          TEXT,
+                status            TEXT DEFAULT 'pending',
+                reject_reason     TEXT,
+                sana              TEXT,
+                supervisor_id     INTEGER NOT NULL,
+                lokatsiya_address TEXT
             )
         """)
         await db.commit()
+
+        # Migration: lokatsiya_address ustuni (eski DB lar uchun)
+        try:
+            await db.execute("ALTER TABLE klientlar ADD COLUMN lokatsiya_address TEXT")
+            await db.commit()
+        except Exception:
+            pass
+
+        # Sorovlar (agent requests) table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS sorovlar (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id      INTEGER NOT NULL,
+                agent_ism     TEXT    NOT NULL,
+                tur           TEXT    NOT NULL,
+                dokon_nomi    TEXT,
+                yangi_qiymat  TEXT,
+                lat           REAL,
+                lon           REAL,
+                foto_ids      TEXT,
+                izoh          TEXT,
+                status        TEXT    DEFAULT 'pending_supervisor',
+                supervisor_id INTEGER,
+                sup_msg_id    INTEGER,
+                admin_msg_id  INTEGER,
+                sana          TEXT    NOT NULL
+            )
+        """)
+        await db.commit()
+
+        # Migration: group_id for sorovlar (which group the approved request was posted to)
+        try:
+            await db.execute("ALTER TABLE sorovlar ADD COLUMN group_id INTEGER")
+            await db.commit()
+        except Exception:
+            pass
+
+        # Supervisor → Telegram group mapping
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS supervisor_group (
+                supervisor_id INTEGER PRIMARY KEY,
+                group_chat_id INTEGER NOT NULL
+            )
+        """)
+        await db.commit()
+
+        # Audit log jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     BIGINT,
+                user_role   VARCHAR(50),
+                action_type VARCHAR(100),
+                target      TEXT,
+                old_value   TEXT,
+                new_value   TEXT,
+                status      VARCHAR(50),
+                request_id  INTEGER,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
+
+        # Migration: inn ustunidan NOT NULL ni olib tashlash
+        # (klient_inn handler ixtiyoriy deb yozadi, lekin eski DB NOT NULL bilan yaratilgan)
+        try:
+            async with db.execute("PRAGMA table_info(klientlar)") as cur:
+                cols = await cur.fetchall()
+            inn_row = next((c for c in cols if c[1] == "inn"), None)
+            if inn_row and inn_row[3] == 1:  # notnull flag
+                await db.execute("BEGIN")
+                await db.execute("ALTER TABLE klientlar RENAME TO klientlar_old")
+                await db.execute("""
+                    CREATE TABLE klientlar (
+                        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                        rasm_file_id      TEXT,
+                        firma_nomi        TEXT NOT NULL,
+                        telefon1          TEXT NOT NULL,
+                        telefon2          TEXT,
+                        inn               TEXT UNIQUE,
+                        orienter          TEXT NOT NULL,
+                        lokatsiya_lat     REAL,
+                        lokatsiya_lon     REAL,
+                        kategoriya        TEXT NOT NULL,
+                        dokon_turi        TEXT NOT NULL,
+                        distributor       TEXT NOT NULL,
+                        agent_kod         TEXT NOT NULL,
+                        vizit_kun         TEXT NOT NULL,
+                        chastota          TEXT NOT NULL,
+                        limit_summa       REAL NOT NULL,
+                        brendlar          TEXT,
+                        status            TEXT DEFAULT 'pending',
+                        reject_reason     TEXT,
+                        sana              TEXT,
+                        supervisor_id     INTEGER NOT NULL,
+                        lokatsiya_address TEXT
+                    )
+                """)
+                await db.execute("""
+                    INSERT INTO klientlar
+                    SELECT id, rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
+                           lokatsiya_lat, lokatsiya_lon, kategoriya, dokon_turi, distributor,
+                           agent_kod, vizit_kun, chastota, limit_summa, brendlar, status,
+                           reject_reason, sana, supervisor_id, lokatsiya_address
+                    FROM klientlar_old
+                """)
+                await db.execute("DROP TABLE klientlar_old")
+                await db.commit()
+        except Exception:
+            try:
+                await db.execute("ROLLBACK")
+            except Exception:
+                pass
 
 
 # ── Xodim ────────────────────────────────────────────────────────
@@ -300,6 +414,17 @@ async def get_available_checkers() -> list:
         async with db.execute("""
             SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar
             WHERE lavozim IN ('Supervisor', 'Filial Rahbari', 'Distribyutor')
+            AND status = 'approved'
+        """) as cur:
+            return await cur.fetchall()
+
+
+async def get_distributors() -> list:
+    """Barcha tasdiqlangan distribyutorlar."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar
+            WHERE lavozim = 'Distribyutor'
             AND status = 'approved'
         """) as cur:
             return await cur.fetchall()
@@ -868,19 +993,19 @@ async def get_all_biriktirish_detailed() -> list:
 
 # ── Klientlar (Clients) ──────────────────────────────────────────
 async def insert_klient(rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
-                       lokatsiya_lat, lokatsiya_lon, kategoriya, dokon_turi, distributor,
+                       lokatsiya_lat, lokatsiya_lon, lokatsiya_address, kategoriya, dokon_turi, distributor,
                        agent_kod, vizit_kun, chastota, limit_summa, brendlar, supervisor_id) -> int:
     """Yangi klientni qo'shadi."""
     sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("""
             INSERT INTO klientlar (rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
-                                  lokatsiya_lat, lokatsiya_lon, kategoriya, dokon_turi,
+                                  lokatsiya_lat, lokatsiya_lon, lokatsiya_address, kategoriya, dokon_turi,
                                   distributor, agent_kod, vizit_kun, chastota, limit_summa,
                                   brendlar, status, sana, supervisor_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         """, (rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
-              lokatsiya_lat, lokatsiya_lon, kategoriya, dokon_turi,
+              lokatsiya_lat, lokatsiya_lon, lokatsiya_address, kategoriya, dokon_turi,
               distributor, agent_kod, vizit_kun, chastota, limit_summa,
               brendlar, sana, supervisor_id))
         await db.commit()
@@ -941,13 +1066,30 @@ async def reject_klient(klient_id: int, reason: str):
 
 
 async def search_klientlar(query: str) -> list:
-    """Klientlarni qidirish (firma_nomi, inn, distributor bo'yicha)."""
+    """Klientlarni qidirish (firma_nomi, inn, distributor, telefon bo'yicha)."""
+    # Normalize to last-9-digit national number for phone matching
+    digits = "".join(filter(str.isdigit, query))
+    if len(digits) == 12 and digits.startswith("998"):
+        phone_q = digits[3:]
+    elif len(digits) == 10 and digits.startswith("0"):
+        phone_q = digits[1:]
+    elif len(digits) >= 9:
+        phone_q = digits[-9:]
+    else:
+        phone_q = digits
+
     async with aiosqlite.connect(DB_PATH) as db:
+        # Strip '+' and spaces from stored phone before comparing
         async with db.execute("""
             SELECT * FROM klientlar
-            WHERE firma_nomi LIKE ? OR inn LIKE ? OR distributor LIKE ?
+            WHERE firma_nomi LIKE ?
+               OR inn LIKE ?
+               OR distributor LIKE ?
+               OR REPLACE(REPLACE(telefon1, '+', ''), ' ', '') LIKE ?
+               OR REPLACE(REPLACE(telefon2, '+', ''), ' ', '') LIKE ?
             ORDER BY sana DESC
-        """, (f"%{query}%", f"%{query}%", f"%{query}%")) as cur:
+        """, (f"%{query}%", f"%{query}%", f"%{query}%",
+              f"%{phone_q}%", f"%{phone_q}%")) as cur:
             return await cur.fetchall()
 
 
@@ -958,6 +1100,142 @@ async def get_all_klientlar_for_excel() -> list:
             "SELECT * FROM klientlar WHERE status='approved' ORDER BY firma_nomi"
         ) as cur:
             return await cur.fetchall()
+
+
+async def get_klientlar_stats() -> dict:
+    """Klientlar soni statuslar bo'yicha."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT status, COUNT(*) FROM klientlar GROUP BY status"
+        ) as cur:
+            rows = await cur.fetchall()
+    stats = {"pending": 0, "approved": 0, "rejected": 0}
+    for status, count in rows:
+        if status in stats:
+            stats[status] = count
+    stats["total"] = sum(stats.values())
+    return stats
+
+
+async def get_opened_klientlar_for_excel() -> list:
+    """Ochilgan (pending + approved) klientlar Excel uchun."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT id, firma_nomi, telefon1, telefon2, inn, orienter,
+                      lokatsiya_lat, lokatsiya_lon, lokatsiya_address,
+                      kategoriya, dokon_turi, distributor, agent_kod,
+                      limit_summa, brendlar, status, sana, supervisor_id
+               FROM klientlar
+               WHERE status IN ('pending', 'approved')
+               ORDER BY sana DESC"""
+        ) as cur:
+            return await cur.fetchall()
+
+
+# ── Sorovlar (agent requests) ─────────────────────────────────────
+
+async def insert_sorov(agent_id: int, agent_ism: str, tur: str,
+                       dokon_nomi: str | None, yangi_qiymat: str | None,
+                       lat: float | None, lon: float | None,
+                       foto_ids: str | None, izoh: str | None,
+                       supervisor_id: int | None) -> int:
+    sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """INSERT INTO sorovlar
+               (agent_id, agent_ism, tur, dokon_nomi, yangi_qiymat,
+                lat, lon, foto_ids, izoh, status, supervisor_id, sana)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (agent_id, agent_ism, tur, dokon_nomi, yangi_qiymat,
+             lat, lon, foto_ids, izoh,
+             "pending_supervisor" if supervisor_id else "pending_admin",
+             supervisor_id, sana),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_sorov(sorov_id: int) -> tuple | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM sorovlar WHERE id=?", (sorov_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def update_sorov_status(sorov_id: int, status: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE sorovlar SET status=? WHERE id=?", (status, sorov_id)
+        )
+        await db.commit()
+
+
+async def update_sorov_sup_msg_id(sorov_id: int, msg_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE sorovlar SET sup_msg_id=? WHERE id=?", (msg_id, sorov_id)
+        )
+        await db.commit()
+
+
+async def update_sorov_admin_msg_id(sorov_id: int, msg_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE sorovlar SET admin_msg_id=? WHERE id=?", (msg_id, sorov_id)
+        )
+        await db.commit()
+
+
+async def get_sorov_by_sup_msg_id(msg_id: int) -> tuple | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM sorovlar WHERE sup_msg_id=?", (msg_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def get_sorov_by_admin_msg_id(msg_id: int) -> tuple | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM sorovlar WHERE admin_msg_id=?", (msg_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def update_sorov_group_id(sorov_id: int, group_chat_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE sorovlar SET group_id=? WHERE id=?", (group_chat_id, sorov_id)
+        )
+        await db.commit()
+
+
+# ── Supervisor ↔ Group mapping ────────────────────────────────────
+
+async def set_supervisor_group(supervisor_id: int, group_chat_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO supervisor_group (supervisor_id, group_chat_id) VALUES (?, ?)",
+            (supervisor_id, group_chat_id)
+        )
+        await db.commit()
+
+
+async def get_supervisor_group(supervisor_id: int) -> int | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT group_chat_id FROM supervisor_group WHERE supervisor_id=?",
+            (supervisor_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+async def delete_supervisor_group(supervisor_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM supervisor_group WHERE supervisor_id=?", (supervisor_id,))
+        await db.commit()
 
 
 async def check_duplicate_firma(firma_nomi: str) -> dict | None:
@@ -971,9 +1249,48 @@ async def check_duplicate_firma(firma_nomi: str) -> dict | None:
             if row:
                 cols = ("id", "rasm", "firma_nomi", "telefon1", "telefon2", "inn", "orienter",
                         "lat", "lon", "kategoriya", "dokon_turi", "distributor", "agent_kod",
-                        "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id")
+                        "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id",
+                        "lokatsiya_address")
                 return dict(zip(cols, row))
             return None
+
+
+# ── Audit log ────────────────────────────────────────────────────
+
+async def insert_audit_log(user_id: int, user_role: str, action_type: str,
+                            target: str | None = None, old_value: str | None = None,
+                            new_value: str | None = None, status: str | None = None,
+                            request_id: int | None = None) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO audit_log
+              (user_id, user_role, action_type, target, old_value, new_value, status, request_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, user_role, action_type, target, old_value, new_value, status, request_id))
+        await db.commit()
+
+
+async def get_audit_logs(filter_type: str = "all", limit: int = 20) -> list:
+    """Returns [(id, user_id, user_role, action_type, target, old_value, new_value, status, request_id, created_at, ism)]"""
+    if filter_type == "agent":
+        where = "WHERE a.user_role = 'agent'"
+    elif filter_type == "supervisor":
+        where = "WHERE a.user_role IN ('supervisor', 'filial_rahbari')"
+    elif filter_type == "rejected":
+        where = "WHERE a.status = 'rejected'"
+    else:
+        where = ""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(f"""
+            SELECT a.id, a.user_id, a.user_role, a.action_type, a.target,
+                   a.old_value, a.new_value, a.status, a.request_id, a.created_at,
+                   x.ism
+            FROM audit_log a
+            LEFT JOIN xodimlar x ON x.user_id = a.user_id
+            {where}
+            ORDER BY a.id DESC LIMIT ?
+        """, (limit,)) as cur:
+            return await cur.fetchall()
 
 
 async def check_duplicate_telefon(telefon: str) -> dict | None:
@@ -987,6 +1304,7 @@ async def check_duplicate_telefon(telefon: str) -> dict | None:
             if row:
                 cols = ("id", "rasm", "firma_nomi", "telefon1", "telefon2", "inn", "orienter",
                         "lat", "lon", "kategoriya", "dokon_turi", "distributor", "agent_kod",
-                        "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id")
+                        "vizit_kun", "chastota", "limit", "brendlar", "status", "reason", "sana", "sup_id",
+                        "lokatsiya_address")
                 return dict(zip(cols, row))
             return None

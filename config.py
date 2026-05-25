@@ -1,4 +1,5 @@
 import os
+import re
 
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
@@ -18,7 +19,57 @@ FILIALLAR = [
 
 LAVOZIMLAR = ["Filial Rahbari", "Supervisor", "Agent", "Operator", "Distribyutor"]
 
-DOKON_TURLARI = ["Bozor", "Supermarket", "Mini market", "Magazin", "Apteka", "Ombor", "Boshqa"]
+DOKON_TURLARI = [
+    "Elektromarket",
+    "Elektrotexnika",
+    "Elektrotovar",
+    "Elektrotovar Lyustra",
+    "Gipermarket",
+    "Kabel, Avtomatika",
+    "Lyustra",
+    "Oziq-ovqat",
+    "Quruvchi",
+    "Santexnika",
+    "Xoz Mag",
+    "Boshqa",
+]
+DOKON_SLUGLARI = {re.sub(r'[^a-z0-9]+', '_', k.lower()).strip('_'): k for k in DOKON_TURLARI}
+
+AGENT_PREFIX_REGIONS = {
+    "AN": "Andijon",
+    "BX": "Buxoro",
+    "FA": "Farg'ona",
+    "QQ": "Qo'qon",
+    "TM": "Termiz",
+    "XM": "Xorazm",
+    "JZ": "Jizzax",
+    "KS": "Koson",
+    "SM": "Samarqand",
+    "NM": "Namangan",
+    "NK": "Nukus",
+    "NV": "Navoiy",
+    "GJ": "Guliston",
+}
+
+AGENT_KODLAR = {
+    "AN01", "AN02", "AN04", "AN05", "AN07", "AN08",
+    "BX01", "BX02", "BX03", "BX04",
+    "FA01", "FA02", "FA03", "FA07",
+    "QQ01", "QQ02", "QQ03", "QQ08",
+    "TM02", "TM03", "TM04", "TM05", "TM07", "TM08",
+    "XM01", "XM03", "XM04",
+    "SM01", "SM02", "SM03", "SM04", "SM06", "SM07",
+    "GJ01", "GJ02", "GJ03", "GJ04", "GJ07",
+    "NK01", "NK02",
+    "NV01", "NV02", "NV03", "NV05",
+    "JZ01", "JZ03", "JZ04", "JZ07", "JZ08",
+    "KS01", "KS02", "KS03", "KS06", "KS07", "KS08",
+    "NM01", "NM02",
+}
+
+# Supervisor kodi: <PREFIX>100  (e.g. AN100, SM100)
+SUPERVISOR_KODLAR = {prefix + "100" for prefix in AGENT_PREFIX_REGIONS}
+
 BRENDLAR_LIST = ["Dusel", "Verla", "Cable", "Ockean", "Tools"]
 VIZIT_KUNLARI = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"]
 CHASTOTA_LIST = ["1x1 (har hafta)", "2x1 (ikki haftada)", "1x1 (oyda)"]
@@ -28,13 +79,14 @@ GROUP_TIMEOUT_SEC = 60   # 1 daqiqa — bir guruhga birlashish oynasi
 
 # Conversation states
 ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN = range(7)
-EDIT_USER, EDIT_FIELD, EDIT_VALUE = range(7, 10)
-SEARCH_QUERY        = 10
-BIRIKTIR_AGENT      = 11
-BIRIKTIR_CHECKER    = 12
-BIRIKTIR_DETAIL     = 13
-BIRIKTIR_EDIT_FIELD = 14
-BIRIKTIR_EDIT_VALUE = 15
+XODIM_LIST          = 7
+EDIT_USER, EDIT_FIELD, EDIT_VALUE = range(8, 11)
+SEARCH_QUERY        = 11
+BIRIKTIR_AGENT      = 12
+BIRIKTIR_CHECKER    = 13
+BIRIKTIR_DETAIL     = 14
+BIRIKTIR_EDIT_FIELD = 15
+BIRIKTIR_EDIT_VALUE = 16
 
 # Client registration states (16 steps)
 KLIENT_RASM         = 20
@@ -59,3 +111,22 @@ CHECKER_TIMEOUT_SEC = 1800 # checker 30 daqiqada javob bermasa admin ogohlantiri
 
 # Pagination
 PAGE_SIZE = 10
+
+# So'rov (request) flow states
+SOROV_TUR   = 40
+SOROV_DOKON = 41
+SOROV_LOK   = 42
+SOROV_TEL   = 43
+SOROV_FOTO  = 44
+SOROV_IZOH  = 45
+SOROV_MSG          = 46  # kept for compatibility (no longer used in conv handler)
+SOROV_BATCH_COLLECT = 49
+SOROV_BATCH_PREVIEW = 50
+# Limit qo'shish (Filial Rahbari)
+LIMIT_DOKON = 47
+LIMIT_SUMMA = 48
+
+BATCH_TIMEOUT_SEC = 180  # 3 daqiqa faolsiz → auto-submit
+
+# /instruksiya video placeholder (update file_id here once video is uploaded)
+INSTRUKSIYA_VIDEO_ID = ""
