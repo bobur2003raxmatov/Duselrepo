@@ -211,15 +211,25 @@ def xodimlar_edit_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
 
 
 def group_sorov_inline(group_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔄 Jarayonda", callback_data=f"grp_prog_{group_id}"),
-        InlineKeyboardButton("✅ Bajarildi",  callback_data=f"grp_done_{group_id}"),
-    ]])
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Jarayonda", callback_data=f"grp_prog_{group_id}"),
+            InlineKeyboardButton("✅ Bajarildi",  callback_data=f"grp_done_{group_id}"),
+        ],
+        [InlineKeyboardButton("📋 Tafsilotlar", callback_data=f"grp_detail_{group_id}")],
+    ])
 
 
 def group_bajarildi_inline(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Bajarildi", callback_data=f"grp_done_{group_id}")],
+        [InlineKeyboardButton("📋 Tafsilotlar", callback_data=f"grp_detail_{group_id}")],
+    ])
+
+
+def group_detail_back_inline(group_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Bajarildi", callback_data=f"grp_done_{group_id}"),
+        InlineKeyboardButton("⬅️ Orqaga", callback_data=f"grp_back_{group_id}"),
     ]])
 
 
@@ -472,12 +482,6 @@ def klient_lokatsiya_inline_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📍 GPS joylashuv ulashish", callback_data="lok_gps")],
         [InlineKeyboardButton("✏️ Manzilni qo'lda kiritish", callback_data="lok_text")],
     ])
-
-
-def klient_kategoriya_kb() -> InlineKeyboardMarkup:
-    from config import DOKON_TURLARI
-    buttons = [[InlineKeyboardButton(cat, callback_data=f"klient_kat_{_dokon_slug(cat)}")] for cat in DOKON_TURLARI]
-    return InlineKeyboardMarkup(buttons)
 
 
 def klient_dokon_turi_kb() -> InlineKeyboardMarkup:

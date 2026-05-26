@@ -14,6 +14,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     MessageReactionHandler,
+    PicklePersistence,
     filters,
 )
 
@@ -24,7 +25,7 @@ from config import (
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
     BIRIKTIR_EDIT_VALUE,
     KLIENT_RASM, KLIENT_FIRMA_NOMI, KLIENT_TELEFON1, KLIENT_TELEFON2,
-    KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
+    KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA,
     KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
     KLIENT_LIMIT, KLIENT_CONFIRM,
     SOROV_TUR, SOROV_DOKON, SOROV_LOK, SOROV_TEL,
@@ -36,7 +37,7 @@ from database import init_db
 from utils import daily_report_job, weekly_report_job, agent_reminder_job
 from handlers import (
     reaction_handler,
-    start, cancel,
+    start,
     ism_olish, lavozim_olish, kod_olish,
     filial_olish, telefon_olish, telefon2_olish,
     tugilgan_kun_olish,
@@ -57,7 +58,7 @@ from handlers import (
     _xodim_list_page_cb, _xodim_info_cb, _xodim_edit_cb, _xodim_search_start_cb,
     new_client_command, klient_rasm, klient_firma_nomi, klient_telefon1,
     klient_telefon2, klient_inn, klient_orienter,
-    klient_lokatsiya, klient_kategoriya,
+    klient_lokatsiya,
     klient_dokon_turi, klient_distributor, klient_agent_kod,
     klient_limit, klient_confirm,
     admin_klientlar,
@@ -86,13 +87,14 @@ logger = logging.getLogger(__name__)
 
 
 def build_application() -> Application:
-    app = Application.builder().token(TOKEN).build()
+    persistence = PicklePersistence(filepath="bot_persistence.pkl")
+    app = Application.builder().token(TOKEN).persistence(persistence).build()
 
-    cancel_cmd = CommandHandler("cancel", cancel)
+    start_cmd = CommandHandler("start", start)
 
     # ── Ro'yxatdan o'tish ConversationHandler ────────────────────
     royxat_conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[start_cmd],
         states={
             ISM:          [MessageHandler(filters.TEXT & ~filters.COMMAND, ism_olish)],
             LAVOZIM:      [MessageHandler(filters.TEXT & ~filters.COMMAND, lavozim_olish)],
@@ -108,7 +110,7 @@ def build_application() -> Application:
             ],
             TUGILGAN_KUN: [MessageHandler(filters.TEXT & ~filters.COMMAND, tugilgan_kun_olish)],
         },
-        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        fallbacks=[start_cmd],
         allow_reentry=True,
     )
 
@@ -132,7 +134,7 @@ def build_application() -> Application:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, search_query_handler),
             ],
         },
-        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        fallbacks=[start_cmd],
         allow_reentry=True,
         per_message=False,
     )
@@ -161,7 +163,7 @@ def build_application() -> Application:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, biriktir_edit_value_handler),
             ],
         },
-        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        fallbacks=[start_cmd],
         allow_reentry=True,
         per_message=False,
     )
@@ -187,14 +189,13 @@ def build_application() -> Application:
                 MessageHandler(filters.LOCATION, klient_lokatsiya),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, klient_lokatsiya),
             ],
-            KLIENT_KATEGORIYA:  [CallbackQueryHandler(klient_kategoriya, pattern="^klient_kat_")],
             KLIENT_DOKON_TURI:  [CallbackQueryHandler(klient_dokon_turi, pattern="^klient_tur_")],
             KLIENT_DISTRIBUTOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_distributor)],
             KLIENT_AGENT_KOD:   [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_agent_kod)],
             KLIENT_LIMIT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, klient_limit)],
             KLIENT_CONFIRM:     [CallbackQueryHandler(klient_confirm, pattern="^klient_submit$|^klient_cancel$")],
         },
-        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        fallbacks=[start_cmd],
         allow_reentry=True,
         per_message=False,
     )
@@ -215,7 +216,7 @@ def build_application() -> Application:
             SOROV_BATCH_COLLECT: [MessageHandler(filters.ALL & ~filters.COMMAND, batch_collect_handler)],
             SOROV_BATCH_PREVIEW: [CallbackQueryHandler(batch_callback, pattern="^batch_")],
         },
-        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        fallbacks=[start_cmd],
         allow_reentry=True,
         per_message=False,
     )
@@ -229,7 +230,7 @@ def build_application() -> Application:
             LIMIT_DOKON: [MessageHandler(filters.TEXT & ~filters.COMMAND, limit_dokon_olish)],
             LIMIT_SUMMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, limit_summa_olish)],
         },
-        fallbacks=[cancel_cmd, CommandHandler("start", start)],
+        fallbacks=[start_cmd],
         allow_reentry=True,
         per_message=False,
     )
@@ -240,8 +241,6 @@ def build_application() -> Application:
     app.add_handler(klient_conv)
     app.add_handler(sorov_conv)
     app.add_handler(limit_conv)
-    app.add_handler(cancel_cmd)
-
     app.add_handler(CommandHandler("instruksiya", instruksiya_cmd))
 
     app.add_handler(MessageHandler(filters.Regex(r"^🏆 Reyting$"),                 admin_reyting_menu))
@@ -279,21 +278,20 @@ async def post_init(app: Application):
     logger.info("✅ Ma'lumotlar bazasi tayyor.")
     from telegram import BotCommandScopeDefault, BotCommandScopeChat
     from config import ADMIN_ID as _ADMIN_ID
-    # All users see only /start and /cancel
+    # Barcha foydalanuvchilar faqat /start va /instruksiya ko'radi
+    # (/cancel ko'rinmaydi — /start avtomatik bekor qiladi)
     await app.bot.set_my_commands(
         [
             BotCommand("start",       "Botni qayta ishga tushirish"),
             BotCommand("instruksiya", "Botdan foydalanish yo'riqnomasi"),
-            BotCommand("cancel",      "Jarayonni bekor qilish"),
         ],
         scope=BotCommandScopeDefault(),
     )
-    # Admin also sees /new_client
+    # Admin ham /new_client ko'radi
     await app.bot.set_my_commands(
         [
             BotCommand("start",      "Botni qayta ishga tushirish"),
             BotCommand("new_client", "Yangi klient registratsiyasi"),
-            BotCommand("cancel",     "Jarayonni bekor qilish"),
         ],
         scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
     )
@@ -338,10 +336,34 @@ async def post_init(app: Application):
 
 async def error_handler(update: object, context) -> None:
     from telegram.error import NetworkError, TimedOut, Conflict
+    from config import ADMIN_ID as _ADMIN
+
     if isinstance(context.error, (NetworkError, TimedOut, Conflict)):
         logger.warning(f"Tarmoq xatosi (vaqtinchalik): {context.error}")
         return
+
     logger.error("Kutilmagan xato:", exc_info=context.error)
+
+    # Foydalanuvchiga o'zbek tilida xato xabari
+    if update and hasattr(update, "effective_user") and update.effective_user:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="⚠️ Texnik xato yuz berdi. Iltimos /start bosing va qaytadan urinib ko'ring.",
+            )
+        except Exception:
+            pass
+
+    # Adminga batafsil xato xabari
+    try:
+        err_text = str(context.error)[:800]
+        await context.bot.send_message(
+            chat_id=_ADMIN,
+            text=f"🔴 *Bot xatosi yuz berdi*\n\n`{err_text}`",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
 
 
 def main():

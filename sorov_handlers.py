@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import database as db
 from config import (
-    ADMIN_ID,
+    ADMIN_ID, GROUP_CHAT_ID,
     SOROV_TUR, SOROV_DOKON, SOROV_LOK, SOROV_TEL,
     SOROV_FOTO, SOROV_IZOH,
     SOROV_BATCH_COLLECT, SOROV_BATCH_PREVIEW,
@@ -68,14 +68,19 @@ def _elapsed(sana_str: str) -> str:
 
 
 async def _resolve_group(uid: int, lavozim: str) -> tuple:
-    """Return (supervisor_id, group_chat_id) for the given user."""
+    """Return (supervisor_id, group_chat_id) for the given user.
+
+    Falls back to the main GROUP_CHAT_ID when no specific group is configured,
+    so requests are never silently lost.
+    """
     if lavozim == "Agent":
         sup_id = await db.get_biriktirish(uid)
         group  = await db.get_supervisor_group(sup_id) if sup_id else None
-        return sup_id, group
+        return sup_id, group or GROUP_CHAT_ID
     if lavozim in ("Supervisor", "Filial Rahbari"):
-        return None, await db.get_supervisor_group(uid)
-    return None, None
+        group = await db.get_supervisor_group(uid)
+        return None, group or GROUP_CHAT_ID
+    return None, GROUP_CHAT_ID
 
 
 async def _send_media(context, chat_id: int, media_ref: str):
@@ -100,61 +105,58 @@ async def _send_media(context, chat_id: int, media_ref: str):
 # CARD BUILDERS  (all return MarkdownV2 text)
 # ══════════════════════════════════════════════
 
-def _card_lokatsiya(ism: str, dokon: str, lat, lon, sorov_id: int) -> str:
+def _card_lokatsiya(ism: str, dokon: str, lat, lon, sorov_id: int, lavozim: str = "Agent") -> str:
     map_link = f"https://maps.google.com/?q={lat},{lon}"
     return (
         f"📍 *Lokatsiya o'zgartirish*\n"
-        f"👤 Agent: {em(ism)}\n"
+        f"👤 {em(lavozim)}: {em(ism)}\n"
         f"🏪 Dokon: {em(dokon)}\n"
         f"📌 Lokatsiya: [Google Maps]({map_link})\n"
         f"🆔 So'rov \\#{sorov_id}"
     )
 
 
-def _card_telefon(ism: str, dokon: str, phone: str, sorov_id: int) -> str:
+def _card_telefon(ism: str, dokon: str, phone: str, sorov_id: int, lavozim: str = "Agent") -> str:
     return (
         f"📞 *Raqam o'zgartirish*\n"
-        f"👤 Agent: {em(ism)}\n"
+        f"👤 {em(lavozim)}: {em(ism)}\n"
         f"🏪 Dokon: {em(dokon)}\n"
         f"📱 Raqam: `{em(phone)}`\n"
         f"🆔 So'rov \\#{sorov_id}"
     )
 
 
-def _card_vizit(ism: str, izoh: str, sorov_id: int) -> str:
+def _card_vizit(ism: str, izoh: str, sorov_id: int, lavozim: str = "Agent") -> str:
     return (
         f"🖼 *Vizitda muammo*\n"
-        f"👤 Agent: {em(ism)}\n"
+        f"👤 {em(lavozim)}: {em(ism)}\n"
         f"💬 Izoh: {em(izoh)}\n"
         f"🆔 So'rov \\#{sorov_id}"
     )
 
 
-def _card_boshqa(ism: str, text: str, sorov_id: int) -> str:
+def _card_boshqa(ism: str, text: str, sorov_id: int, lavozim: str = "Agent") -> str:
     content_line = f"📝 {em(text[:500])}\n" if text else ""
     return (
         f"💬 *Boshqa muammo*\n"
-        f"👤 Agent: {em(ism)}\n"
+        f"👤 {em(lavozim)}: {em(ism)}\n"
         f"{content_line}"
         f"🆔 So'rov \\#{sorov_id}"
     )
 
 
 def _card_limit(ism: str, dokon: str, limit_val: str, sorov_id: int) -> str:
-    try:
-        formatted = f"{int(limit_val):,}"
-    except Exception:
-        formatted = limit_val
+    limit_lines = "\n".join(f"  • {em(line.strip())}" for line in limit_val.splitlines() if line.strip())
     return (
         f"💰 *Limit qo'shish*\n"
         f"👤 Filial Rahbari: {em(ism)}\n"
         f"🏪 Dokon: {em(dokon)}\n"
-        f"💵 Yangi limit: *{em(formatted)}* so'm\n"
+        f"💵 Yangi limitlar:\n{limit_lines}\n"
         f"🆔 So'rov \\#{sorov_id}"
     )
 
 
-def _build_card(sorov: tuple) -> str:
+def _build_card(sorov: tuple, lavozim: str = "Agent") -> str:
     """Build a card from a sorovlar DB row (used in approval callback)."""
     # cols: id[0] agent_id[1] agent_ism[2] tur[3] dokon_nomi[4] yangi_qiymat[5]
     #       lat[6] lon[7] foto_ids[8] izoh[9] status[10] supervisor_id[11]
@@ -168,14 +170,14 @@ def _build_card(sorov: tuple) -> str:
     sid   = sorov[0]
 
     if tur == "lokatsiya":
-        return _card_lokatsiya(ism, dokon, lat, lon, sid)
+        return _card_lokatsiya(ism, dokon, lat, lon, sid, lavozim)
     if tur == "telefon":
-        return _card_telefon(ism, dokon, qiymat, sid)
+        return _card_telefon(ism, dokon, qiymat, sid, lavozim)
     if tur == "vizit":
-        return _card_vizit(ism, izoh, sid)
+        return _card_vizit(ism, izoh, sid, lavozim)
     if tur == "limit":
         return _card_limit(ism, dokon, qiymat, sid)
-    return _card_boshqa(ism, izoh, sid)
+    return _card_boshqa(ism, izoh, sid, lavozim)
 
 
 # ══════════════════════════════════════════════
@@ -184,15 +186,16 @@ def _build_card(sorov: tuple) -> str:
 
 async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
                                ism: str, supervisor_id: int):
-    tur   = sorov_data.get("tur", "")
-    dokon = sorov_data.get("dokon_nomi", "—")
+    tur     = sorov_data.get("tur", "")
+    dokon   = sorov_data.get("dokon_nomi", "—")
+    lavozim = sorov_data.get("lavozim", "Agent")
 
     if tur == "lokatsiya":
-        card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id)
+        card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id, lavozim)
     elif tur == "telefon":
-        card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id)
+        card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id, lavozim)
     elif tur == "vizit":
-        card = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id)
+        card = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id, lavozim)
         # Send photos to supervisor first so they can see them before approving
         foto_ids = sorov_data.get("fotolar", [])
         if foto_ids:
@@ -202,7 +205,7 @@ async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
             except Exception as e:
                 logger.warning(f"Vizit rasmlari supervisorga yuborishda xato: {e}")
     else:  # boshqa
-        card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id)
+        card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id, lavozim)
         media_ref = sorov_data.get("media_ref")
         if media_ref:
             await _send_media(context, supervisor_id, media_ref)
@@ -226,23 +229,24 @@ async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
 
 async def _post_to_group(context, sorov_id: int, sorov_data: dict,
                           ism: str, group_chat_id: int):
-    tur   = sorov_data.get("tur", "")
-    dokon = sorov_data.get("dokon_nomi", "—")
+    tur     = sorov_data.get("tur", "")
+    dokon   = sorov_data.get("dokon_nomi", "—")
+    lavozim = sorov_data.get("lavozim", "Agent")
 
     if tur == "lokatsiya":
-        card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id)
+        card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id, lavozim)
         await context.bot.send_message(
             chat_id=group_chat_id, text=card,
             parse_mode="MarkdownV2", disable_web_page_preview=True,
         )
     elif tur == "telefon":
-        card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id)
+        card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id, lavozim)
         await context.bot.send_message(
             chat_id=group_chat_id, text=card,
             parse_mode="MarkdownV2", disable_web_page_preview=True,
         )
     elif tur == "vizit":
-        caption = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id)
+        caption = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id, lavozim)
         foto_ids = sorov_data.get("fotolar", [])
         if foto_ids:
             media = [InputMediaPhoto(fid) for fid in foto_ids[:-1]]
@@ -253,7 +257,7 @@ async def _post_to_group(context, sorov_id: int, sorov_data: dict,
                 chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2",
             )
     else:  # boshqa
-        card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id)
+        card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id, lavozim)
         await context.bot.send_message(
             chat_id=group_chat_id, text=card, parse_mode="MarkdownV2",
         )
@@ -273,21 +277,25 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int):
     lat, lon = sorov[6], sorov[7]
     izoh     = sorov[9] or "—"
     sorov_id = sorov[0]
+    agent_id = sorov[1]
+
+    agent_row = await db.get_xodim(agent_id)
+    lavozim = agent_row[3] if agent_row else "Agent"  # (status, topic_id, ism, lavozim, ...)
 
     if tur == "lokatsiya":
-        card = _card_lokatsiya(ism, dokon, lat, lon, sorov_id)
+        card = _card_lokatsiya(ism, dokon, lat, lon, sorov_id, lavozim)
         await context.bot.send_message(
             chat_id=group_chat_id, text=card,
             parse_mode="MarkdownV2", disable_web_page_preview=True,
         )
     elif tur == "telefon":
-        card = _card_telefon(ism, dokon, qiymat, sorov_id)
+        card = _card_telefon(ism, dokon, qiymat, sorov_id, lavozim)
         await context.bot.send_message(
             chat_id=group_chat_id, text=card,
             parse_mode="MarkdownV2", disable_web_page_preview=True,
         )
     elif tur == "vizit":
-        caption = _card_vizit(ism, izoh, sorov_id)
+        caption = _card_vizit(ism, izoh, sorov_id, lavozim)
         foto_ids = json.loads(sorov[8]) if sorov[8] else []
         if foto_ids:
             media = [InputMediaPhoto(fid) for fid in foto_ids[:-1]]
@@ -298,7 +306,7 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int):
                 chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2",
             )
     else:  # boshqa / limit
-        card = _build_card(sorov)
+        card = _build_card(sorov, lavozim)
         await context.bot.send_message(
             chat_id=group_chat_id, text=card, parse_mode="MarkdownV2",
         )
@@ -712,7 +720,7 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
 
     # Build card
     now_str = datetime.now().strftime("%d\\.%m\\.%Y %H:%M")
-    role_label = "Agent" if lavozim == "Agent" else em(lavozim)
+    role_label = em(lavozim) if lavozim else "Agent"
     card_lines = [
         f"💬 *Boshqa muammo*",
         f"👤 {role_label}: {em(ism)}",
@@ -911,7 +919,7 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as _e:
             logger.warning(f"Audit log yozishda xato (sorov_appr): {_e}")
 
-        group_chat_id = await db.get_supervisor_group(sup_uid)
+        group_chat_id = await db.get_supervisor_group(sup_uid) or GROUP_CHAT_ID
         logger.info(f"[APPR] sorov_id={sorov_id} sup_uid={sup_uid} group_chat_id={group_chat_id}")
 
         if group_chat_id:
@@ -943,24 +951,12 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 except Exception:
                     pass
         else:
-            logger.warning(f"[APPR] Guruh topilmadi sup_uid={sup_uid}")
+            logger.error(f"[APPR] GROUP_CHAT_ID fallback also missing — sup_uid={sup_uid}")
             await query.edit_message_text(
                 f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
-                f"⚠️ Guruh belgilanmagan! Admin paneldan 'Guruh belgilash' tugmasini bosing.\n"
-                f"Supervisor ID: `{sup_uid}`",
+                f"⚠️ Guruhga yuborib bo'lmadi. Admin bilan bog'laning.",
                 parse_mode="Markdown",
             )
-            try:
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=f"⚠️ Supervisor uchun guruh belgilanmagan\\!\n"
-                         f"So'rov: \\#{sorov_id}\n"
-                         f"Supervisor ID: `{sup_uid}`\n"
-                         f"_Xodim profilidan 'Guruh belgilash' tugmasini bosing\\._",
-                    parse_mode="MarkdownV2",
-                )
-            except Exception:
-                pass
 
         elapsed = _elapsed(sana)
         try:
@@ -1025,17 +1021,34 @@ async def limit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def limit_dokon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["limit_data"]["dokon_nomi"] = update.message.text.strip()
+    uid = update.effective_user.id
+
+    stores = await db.get_klientlar_by_supervisor(uid)
+    limit_lines = ""
+    if stores:
+        limit_lines = "\n\n📊 *Hozirgi limitlar:*\n"
+        for s in stores:
+            firma = s[2]   # firma_nomi
+            lim   = s[15]  # limit_summa
+            if lim:
+                formatted = f"{int(lim):,}"
+                limit_lines += f"• {firma}: {formatted}\n"
+            else:
+                limit_lines += f"• {firma}: —\n"
+
     await update.message.reply_text(
-        "💰 Yangi limitni yozing *(son, masalan: 5000000)*:",
+        f"💰 Limitlarni quyidagi formatda yozing:\n\n"
+        f"`Dusel: 1000000`\n`Ockean: 500000`\n\n"
+        f"Har bir proyekt alohida qatorda.{limit_lines}",
         parse_mode="Markdown",
     )
     return LIMIT_SUMMA
 
 
 async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    raw = update.message.text.strip().replace(" ", "").replace(",", "")
-    if not raw.isdigit():
-        await update.message.reply_text("❌ Faqat son kiriting. Masalan: 5000000\nQayta kiriting:")
+    limit_str = update.message.text.strip()
+    if not limit_str:
+        await update.message.reply_text("❌ Bo'sh xabar. Qayta kiriting:")
         return LIMIT_SUMMA
 
     data  = context.user_data.get("limit_data", {})
@@ -1045,7 +1058,7 @@ async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sorov_id = await db.insert_sorov(
         agent_id=uid, agent_ism=ism, tur="limit",
-        dokon_nomi=dokon, yangi_qiymat=raw,
+        dokon_nomi=dokon, yangi_qiymat=limit_str,
         lat=None, lon=None, foto_ids=None, izoh=None,
         supervisor_id=None,
     )
@@ -1057,37 +1070,32 @@ async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action_type="limit_qoshish",
             target=dokon,
             old_value=None,
-            new_value=raw,
+            new_value=limit_str,
             status="approved",
             request_id=sorov_id,
         )
     except Exception as _e:
         logger.warning(f"Audit log yozishda xato (limit): {_e}")
 
-    group_chat_id = await db.get_supervisor_group(uid)
-    card = _card_limit(ism, dokon, raw, sorov_id)
+    group_chat_id = await db.get_supervisor_group(uid) or GROUP_CHAT_ID
+    card = _card_limit(ism, dokon, limit_str, sorov_id)
 
-    if group_chat_id:
-        try:
-            await context.bot.send_message(
-                chat_id=group_chat_id,
-                text=card,
-                parse_mode="MarkdownV2",
-            )
-            await db.update_sorov_group_id(sorov_id, group_chat_id)
-            await update.message.reply_text(
-                "✅ Limit so'rovi guruhga yuborildi.",
-                reply_markup=filial_rahbari_kb(),
-            )
-        except Exception as e:
-            logger.warning(f"Limit guruhga yuborishda xato: {e}")
-            await update.message.reply_text(
-                f"⚠️ Guruhga yuborishda xato: {e}",
-                reply_markup=filial_rahbari_kb(),
-            )
-    else:
+    try:
+        await context.bot.send_message(
+            chat_id=group_chat_id,
+            text=card,
+            parse_mode="MarkdownV2",
+        )
+        await db.update_sorov_group_id(sorov_id, group_chat_id)
         await update.message.reply_text(
-            "❌ Guruh belgilanmagan. Admin bilan bog'laning.",
+            f"✅ Limit so'rovi yuborildi!\n🏪 Dokon: {dokon}\n💰 Limitlar:\n"
+            + "\n".join(f"  • {line.strip()}" for line in limit_str.splitlines()),
+            reply_markup=filial_rahbari_kb(),
+        )
+    except Exception as e:
+        logger.warning(f"Limit guruhga yuborishda xato: {e}")
+        await update.message.reply_text(
+            f"⚠️ Guruhga yuborishda xato: {e}",
             reply_markup=filial_rahbari_kb(),
         )
 

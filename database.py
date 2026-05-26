@@ -1,6 +1,16 @@
 import aiosqlite
+from contextlib import asynccontextmanager
 from datetime import datetime
-from config import DB_PATH, GROUP_TIMEOUT_SEC
+from config import DB_PATH, GROUP_TIMEOUT_SEC, ADMIN_ID
+
+# ── Ulanish yordamchisi ──────────────────────────────────────────
+# Hozir har so'rovda yangi SQLite ulanish ochiladi va yopiladi.
+# Bu kichik Telegram botlar uchun yetarli. Kelajakda PostgreSQL ga
+# o'tganda shu get_db() ni connection pool bilan almashtirish kifoya.
+@asynccontextmanager
+async def get_db():
+    async with aiosqlite.connect(DB_PATH) as conn:
+        yield conn
 
 
 async def init_db():
@@ -205,6 +215,29 @@ async def init_db():
                 group_chat_id INTEGER NOT NULL
             )
         """)
+
+        # DB versiyasi — migratsiya nazorati uchun
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS db_version (
+                version INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        async with db.execute("SELECT COUNT(*) FROM db_version") as cur:
+            count = (await cur.fetchone())[0]
+        if count == 0:
+            await db.execute("INSERT INTO db_version VALUES (1)")
+
+        # Adminlar jadvali — bir nechta admin qo'shish imkoni
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY
+            )
+        """)
+        # Asosiy admin har doim jadvalda bo'lishi kerak
+        await db.execute(
+            "INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (ADMIN_ID,)
+        )
+
         await db.commit()
 
         # Audit log jadvali
@@ -274,6 +307,52 @@ async def init_db():
                 await db.execute("ROLLBACK")
             except Exception:
                 pass
+
+
+# ── DB versiyasi ─────────────────────────────────────────────────
+async def get_db_version() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT version FROM db_version LIMIT 1") as cur:
+            row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def set_db_version(version: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM db_version")
+        await db.execute("INSERT INTO db_version VALUES (?)", (version,))
+        await db.commit()
+
+
+# ── Adminlar ─────────────────────────────────────────────────────
+async def get_admins() -> list[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT user_id FROM admins") as cur:
+            return [r[0] for r in await cur.fetchall()]
+
+
+async def is_admin(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM admins WHERE user_id=?", (user_id,)
+        ) as cur:
+            return await cur.fetchone() is not None
+
+
+async def add_admin(user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,)
+        )
+        await db.commit()
+
+
+async def remove_admin(user_id: int) -> None:
+    if user_id == ADMIN_ID:
+        return  # Asosiy adminni o'chirib bo'lmaydi
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
+        await db.commit()
 
 
 # ── Xodim ────────────────────────────────────────────────────────
@@ -575,6 +654,16 @@ async def count_group_msgs(group_id: int) -> int:
         ) as cur:
             row = await cur.fetchone()
             return row[0] if row else 0
+
+
+async def get_group_msgs_list(group_id: int) -> list:
+    """Returns [(xabar_turi, vaqt), ...] for all messages in a group, oldest first."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT xabar_turi, vaqt FROM xabarlar WHERE group_id=? ORDER BY id ASC",
+            (group_id,)
+        ) as cur:
+            return await cur.fetchall()
 
 
 # ── Xabar ────────────────────────────────────────────────────────

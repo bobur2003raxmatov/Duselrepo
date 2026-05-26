@@ -11,19 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 async def is_topic_valid(context: ContextTypes.DEFAULT_TYPE, topic_id: int | None) -> bool:
-    if not topic_id:
-        return False
-    try:
-        test = await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            message_thread_id=topic_id,
-            text=".",
-            disable_notification=True,
-        )
-        await context.bot.delete_message(chat_id=GROUP_CHAT_ID, message_id=test.message_id)
-        return True
-    except Exception:
-        return False
+    # Trust the DB value — if the topic is gone, the next real send will raise
+    # BadRequest("message thread not found") which xodim_chat_handler already handles.
+    # Sending a probe message here clutters the admin group on every /start.
+    return bool(topic_id)
 
 
 async def check_sla_timeout(context: ContextTypes.DEFAULT_TYPE):
