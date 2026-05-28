@@ -2,11 +2,13 @@ services:
   - type: web
     name: dusel-telegram-bot
     runtime: python
-    pythonVersion: "3.11.9"
+    pythonVersion: "3.11"
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     plan: free
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: TOKEN
         sync: false
       - key: WEBHOOK_URL
