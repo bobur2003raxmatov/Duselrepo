@@ -177,22 +177,38 @@ async def _send_buffered(
                 latitude=l["lat"],
                 longitude=l["lon"],
             )
-        # 3. Barcha foto/video — bitta media group
+        # 3. Barcha foto/video
         if media_items:
-            media_group = []
-            for b in media_items:
+            if len(media_items) == 1:
+                # Bitta media: to'g'ridan yuborish (send_media_group min 2 talab qiladi)
+                b = media_items[0]
                 if b["type"] == "photo":
-                    media_group.append(InputMediaPhoto(media=b["file_id"], caption=b.get("caption") or ""))
+                    await context.bot.send_photo(
+                        chat_id=GROUP_CHAT_ID,
+                        message_thread_id=topic_id,
+                        photo=b["file_id"],
+                    )
                 else:
-                    media_group.append(InputMediaVideo(media=b["file_id"], caption=b.get("caption") or ""))
-            for j in range(1, len(media_group)):
-                media_group[j] = type(media_group[j])(media=media_group[j].media, caption="")
-            for chunk in range(0, len(media_group), 10):
-                await context.bot.send_media_group(
-                    chat_id=GROUP_CHAT_ID,
-                    message_thread_id=topic_id,
-                    media=media_group[chunk:chunk + 10],
-                )
+                    await context.bot.send_video(
+                        chat_id=GROUP_CHAT_ID,
+                        message_thread_id=topic_id,
+                        video=b["file_id"],
+                    )
+            else:
+                media_group = []
+                for b in media_items:
+                    if b["type"] == "photo":
+                        media_group.append(InputMediaPhoto(media=b["file_id"], caption=b.get("caption") or ""))
+                    else:
+                        media_group.append(InputMediaVideo(media=b["file_id"], caption=b.get("caption") or ""))
+                for j in range(1, len(media_group)):
+                    media_group[j] = type(media_group[j])(media=media_group[j].media, caption="")
+                for chunk in range(0, len(media_group), 10):
+                    await context.bot.send_media_group(
+                        chat_id=GROUP_CHAT_ID,
+                        message_thread_id=topic_id,
+                        media=media_group[chunk:chunk + 10],
+                    )
         # 4. Boshqa xabarlar (ovoz, stiker, fayl, ...)
         for item in other_items:
             await context.bot.copy_message(

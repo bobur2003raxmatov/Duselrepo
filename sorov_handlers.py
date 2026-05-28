@@ -217,7 +217,15 @@ async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
             [InputMediaPhoto(fid) for fid in foto_ids] +
             [InputMediaVideo(fid) for fid in video_ids]
         )
-        if all_media:
+        if len(all_media) == 1:
+            try:
+                if foto_ids:
+                    await context.bot.send_photo(chat_id=supervisor_id, photo=foto_ids[0])
+                else:
+                    await context.bot.send_video(chat_id=supervisor_id, video=video_ids[0])
+            except Exception as e:
+                logger.warning(f"Vizit media supervisorga yuborishda xato: {e}")
+        elif all_media:
             try:
                 for chunk_start in range(0, len(all_media), 10):
                     await context.bot.send_media_group(
@@ -290,7 +298,19 @@ async def _post_to_group(context, sorov_id: int, sorov_data: dict,
             [InputMediaPhoto(fid) for fid in foto_ids] +
             [InputMediaVideo(fid) for fid in video_ids]
         )
-        if all_media:
+        if len(all_media) == 1:
+            b = all_media[0]
+            if foto_ids:
+                await context.bot.send_photo(
+                    chat_id=group_chat_id, photo=foto_ids[0],
+                    caption=caption, parse_mode="MarkdownV2"
+                )
+            else:
+                await context.bot.send_video(
+                    chat_id=group_chat_id, video=video_ids[0],
+                    caption=caption, parse_mode="MarkdownV2"
+                )
+        elif all_media:
             all_media[0] = type(all_media[0])(
                 media=all_media[0].media, caption=caption, parse_mode="MarkdownV2"
             )
@@ -348,8 +368,13 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int):
     elif tur == "vizit":
         caption = _card_vizit(ism, izoh, sorov_id, lavozim)
         foto_ids = json.loads(sorov[8]) if sorov[8] else []
-        all_media = [InputMediaPhoto(fid) for fid in foto_ids]
-        if all_media:
+        if len(foto_ids) == 1:
+            await context.bot.send_photo(
+                chat_id=group_chat_id, photo=foto_ids[0],
+                caption=caption, parse_mode="MarkdownV2"
+            )
+        elif foto_ids:
+            all_media = [InputMediaPhoto(fid) for fid in foto_ids]
             all_media[0] = InputMediaPhoto(
                 media=all_media[0].media, caption=caption, parse_mode="MarkdownV2"
             )
@@ -800,12 +825,20 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
     card = "\n".join(card_lines)
 
     async def _send_photos_and_media(chat_id: int) -> None:
-        # Barcha foto + video → bitta media group
         media_group = (
             [InputMediaPhoto(fid) for fid in photos] +
             [InputMediaVideo(fid) for fid in videos]
         )
-        if media_group:
+        if len(media_group) == 1:
+            # Bitta media: to'g'ridan yuborish
+            try:
+                if photos:
+                    await context.bot.send_photo(chat_id=chat_id, photo=photos[0])
+                else:
+                    await context.bot.send_video(chat_id=chat_id, video=videos[0])
+            except Exception as e:
+                logger.warning(f"Media yuborishda xato: {e}")
+        elif media_group:
             for chunk_start in range(0, len(media_group), 10):
                 try:
                     await context.bot.send_media_group(
