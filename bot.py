@@ -1,8 +1,22 @@
+import os
+import sys
+
+# ── Startup diagnostics (runs before any import that can fail) ─────
+print("=== BOT STARTUP ===", flush=True)
+print(f"TOKEN      : {'SET' if os.environ.get('TOKEN') else '*** NOT SET ***'}", flush=True)
+print(f"WEBHOOK_URL: {os.environ.get('WEBHOOK_URL') or '*** NOT SET ***'}", flush=True)
+print(f"PORT       : {os.environ.get('PORT', '8443')}", flush=True)
+print(f"ADMIN_ID   : {os.environ.get('ADMIN_ID', 'NOT SET')}", flush=True)
+print("===================", flush=True)
+
+if not os.environ.get("TOKEN"):
+    print("FATAL: TOKEN environment variable is not set. Exiting.", flush=True)
+    sys.exit(1)
+# ───────────────────────────────────────────────────────────────────
+
 import logging
 import datetime
 import warnings
-import sys
-import os
 import fcntl
 
 from telegram import BotCommand, ChatPermissions, Update
@@ -401,4 +415,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"FATAL: bot crashed at startup: {exc}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
