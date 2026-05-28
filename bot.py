@@ -63,7 +63,7 @@ print("utils imported OK", flush=True)
 
 from handlers import (
     reaction_handler,
-    start,
+    cancel, start,
     ism_olish, lavozim_olish, kod_olish,
     filial_olish, telefon_olish, telefon2_olish,
     tugilgan_kun_olish,
