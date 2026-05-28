@@ -279,6 +279,8 @@ def build_application() -> Application:
             INSTR_MATN: [
                 CallbackQueryHandler(admin_instruksiya_lavozim_cb, pattern=r"^instr_lav_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_instruksiya_matn_save),
+                MessageHandler(filters.PHOTO, admin_instruksiya_matn_save),
+                MessageHandler(filters.VIDEO, admin_instruksiya_matn_save),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

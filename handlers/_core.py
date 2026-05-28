@@ -1654,12 +1654,16 @@ async def instruksiya_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     _, _, _, lavozim, *_ = user
-    matn = await db.get_instruksiya(lavozim)
-    if matn:
-        await update.message.reply_text(
-            f"📖 *{lavozim} uchun yo'riqnoma*\n\n{matn}",
-            parse_mode="Markdown",
-        )
+    row = await db.get_instruksiya(lavozim)
+    if row:
+        matn, media_type, media_file_id = row
+        caption = f"📖 *{lavozim} uchun yo'riqnoma*\n\n{matn}" if matn else f"📖 *{lavozim} uchun yo'riqnoma*"
+        if media_type == "photo":
+            await update.message.reply_photo(media_file_id, caption=caption, parse_mode="Markdown")
+        elif media_type == "video":
+            await update.message.reply_video(media_file_id, caption=caption, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(caption, parse_mode="Markdown")
     else:
         await update.message.reply_text(
             "📖 Yo'riqnoma hali qo'shilmagan.\nAdmin tez orada qo'shadi."
@@ -1672,10 +1676,15 @@ async def admin_instruksiya_lavozim_cb(update: Update, context: ContextTypes.DEF
     await query.answer()
     lavozim = query.data[len("instr_lav_"):]
     context.user_data["instr_lavozim"] = lavozim
-    mavjud = await db.get_instruksiya(lavozim)
-    mavjud_text = f"\n\n📄 *Joriy matn:*\n{mavjud}" if mavjud else ""
+    row = await db.get_instruksiya(lavozim)
+    if row and (row[0] or row[1]):
+        matn, media_type, _ = row
+        mavjud_text = f"\n\n📄 *Joriy kontent:* {'📷 Rasm' if media_type=='photo' else '🎥 Video' if media_type=='video' else matn}"
+    else:
+        mavjud_text = ""
     await query.edit_message_text(
-        f"✏️ *{lavozim}* uchun instruksiya matnini yuboring:{mavjud_text}\n\n_Bekor qilish: /cancel_",
+        f"✏️ *{lavozim}* uchun instruksiya yuboring:{mavjud_text}\n\n"
+        f"_Matn, rasm yoki video yuborishingiz mumkin._\n_Bekor qilish: /cancel_",
         parse_mode="Markdown",
     )
     return INSTR_MATN
@@ -1685,9 +1694,22 @@ async def admin_instruksiya_matn_save(update: Update, context: ContextTypes.DEFA
     lavozim = context.user_data.pop("instr_lavozim", None)
     if not lavozim:
         return ConversationHandler.END
-    await db.set_instruksiya(lavozim, update.message.text.strip())
-    await update.message.reply_text(
-        f"✅ *{lavozim}* uchun instruksiya saqlandi!",
+
+    msg = update.message
+    if msg.photo:
+        file_id = msg.photo[-1].file_id
+        await db.set_instruksiya(lavozim, msg.caption, "photo", file_id)
+        media_label = "📷 Rasm"
+    elif msg.video:
+        file_id = msg.video.file_id
+        await db.set_instruksiya(lavozim, msg.caption, "video", file_id)
+        media_label = "🎥 Video"
+    else:
+        await db.set_instruksiya(lavozim, msg.text.strip())
+        media_label = "📝 Matn"
+
+    await msg.reply_text(
+        f"✅ *{lavozim}* uchun instruksiya saqlandi! ({media_label})",
         parse_mode="Markdown",
         reply_markup=admin_kb(),
     )

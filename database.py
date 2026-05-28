@@ -308,12 +308,21 @@ async def init_db():
         # Instruksiyalar jadvali (admin har lavozim uchun alohida matn yozadi)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS instruksiyalar (
-                lavozim    TEXT PRIMARY KEY,
-                matn       TEXT NOT NULL,
-                updated_at TEXT
+                lavozim       TEXT PRIMARY KEY,
+                matn          TEXT,
+                media_type    TEXT,
+                media_file_id TEXT,
+                updated_at    TEXT
             )
         """)
         await db.commit()
+        # Migration: media ustunlarini eski DB larga qo'shish
+        for col in ("media_type TEXT", "media_file_id TEXT"):
+            try:
+                await db.execute(f"ALTER TABLE instruksiyalar ADD COLUMN {col}")
+                await db.commit()
+            except Exception:
+                pass
 
     # Admin keshini ishga tushirishda to'ldirish
     await _reload_admin_cache()
@@ -1403,21 +1412,26 @@ async def get_audit_logs(filter_type: str = "all", limit: int = 20) -> list:
             return await cur.fetchall()
 
 
-async def get_instruksiya(lavozim: str) -> str | None:
+async def get_instruksiya(lavozim: str) -> tuple | None:
+    """Returns (matn, media_type, media_file_id) or None."""
     async with get_db() as db:
         async with db.execute(
-            "SELECT matn FROM instruksiyalar WHERE lavozim=?", (lavozim,)
+            "SELECT matn, media_type, media_file_id FROM instruksiyalar WHERE lavozim=?",
+            (lavozim,)
         ) as cur:
-            row = await cur.fetchone()
-            return row[0] if row else None
+            return await cur.fetchone()
 
 
-async def set_instruksiya(lavozim: str, matn: str) -> None:
+async def set_instruksiya(lavozim: str, matn: str | None,
+                          media_type: str | None = None,
+                          media_file_id: str | None = None) -> None:
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with get_db() as db:
         await db.execute(
-            "INSERT OR REPLACE INTO instruksiyalar (lavozim, matn, updated_at) VALUES (?, ?, ?)",
-            (lavozim, matn, updated_at)
+            """INSERT OR REPLACE INTO instruksiyalar
+               (lavozim, matn, media_type, media_file_id, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (lavozim, matn, media_type, media_file_id, updated_at)
         )
         await db.commit()
 
