@@ -1393,6 +1393,65 @@ async def get_audit_logs(filter_type: str = "all", limit: int = 20) -> list:
             return await cur.fetchall()
 
 
+async def get_xabar_guruhi_for_excel() -> list:
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, user_id, ism, filial, topic_id, holat, urgency, vaqt, javob_vaqt
+            FROM xabar_guruhi ORDER BY id DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
+async def get_sorovlar_for_excel() -> list:
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, agent_id, agent_ism, tur, dokon_nomi, yangi_qiymat,
+                   lat, lon, izoh, status, sana
+            FROM sorovlar ORDER BY id DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
+async def get_baholash_for_excel() -> list:
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT b.id, b.group_id,
+                   b.checker_id, c.ism AS checker_ism,
+                   b.agent_id,  a.ism AS agent_ism,
+                   b.yulduz, b.vaqt
+            FROM baholash b
+            LEFT JOIN xodimlar c ON c.user_id = b.checker_id
+            LEFT JOIN xodimlar a ON a.user_id = b.agent_id
+            ORDER BY b.id DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
+async def get_audit_log_for_excel() -> list:
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT a.id, a.user_id, x.ism, a.user_role, a.action_type,
+                   a.target, a.old_value, a.new_value, a.status, a.created_at
+            FROM audit_log a
+            LEFT JOIN xodimlar x ON x.user_id = a.user_id
+            ORDER BY a.id DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
+async def get_all_klientlar_full_for_excel() -> list:
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT id, firma_nomi, telefon1, telefon2, inn, orienter,
+                   lokatsiya_lat, lokatsiya_lon, lokatsiya_address,
+                   kategoriya, dokon_turi, distributor, agent_kod,
+                   vizit_kun, chastota, limit_summa, brendlar,
+                   status, reject_reason, sana, supervisor_id
+            FROM klientlar ORDER BY id DESC
+        """) as cur:
+            return await cur.fetchall()
+
+
 async def check_duplicate_telefon(telefon: str) -> dict | None:
     """Telefon raqami bo'yicha dublikat tekshirish."""
     async with get_db() as db:

@@ -38,7 +38,7 @@ def _role_keyboard(lavozim: str):
         return filial_rahbari_kb()
     return supervisor_kb()
 from utils import (
-    is_topic_valid, check_sla_timeout, generate_excel, generate_klientlar_excel,
+    is_topic_valid, check_sla_timeout, generate_excel, generate_klientlar_excel, generate_full_excel,
     urgency_timeout_job, checker_timeout_job,
 )
 from config import (
@@ -1391,6 +1391,30 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 document=f,
                 caption=f"🏪 Ochilgan klientlar ({len(rows)} ta) — {__import__('datetime').date.today().strftime('%d.%m.%Y')}",
                 filename=filename,
+            )
+        os.remove(filename)
+
+    elif data == "excel_fulldb":
+        await query.answer()
+        await query.edit_message_text("🗄 To'liq DB eksport tayyorlanmoqda...")
+        full_data = {
+            "xodimlar":    await db.get_all_xodimlar_for_excel(),
+            "topshiriqlar": await db.get_xabar_guruhi_for_excel(),
+            "klientlar":   await db.get_all_klientlar_full_for_excel(),
+            "sorovlar":    await db.get_sorovlar_for_excel(),
+            "biriktirish": await db.get_all_biriktirish_detailed(),
+            "baholash":    await db.get_baholash_for_excel(),
+            "audit_log":   await db.get_audit_log_for_excel(),
+        }
+        total = sum(len(v) for v in full_data.values())
+        filename = await generate_full_excel(full_data)
+        today = __import__('datetime').date.today().strftime('%d.%m.%Y')
+        with open(filename, "rb") as f:
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=f,
+                caption=f"🗄 To'liq DB eksport — {today}\nJami: {total} ta yozuv",
+                filename=f"DuselDB_{today.replace('.','_')}.xlsx",
             )
         os.remove(filename)
 

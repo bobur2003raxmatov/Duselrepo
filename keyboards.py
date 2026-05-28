@@ -51,8 +51,9 @@ def remove_kb() -> ReplyKeyboardRemove:
 
 def excel_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Xodimlar hisoboti",      callback_data="excel_xodimlar")],
-        [InlineKeyboardButton("🏪 Ochilgan klientlar Excel", callback_data="excel_klientlar")],
+        [InlineKeyboardButton("📊 Xodimlar hisoboti",        callback_data="excel_xodimlar")],
+        [InlineKeyboardButton("🏪 Ochilgan klientlar Excel",  callback_data="excel_klientlar")],
+        [InlineKeyboardButton("🗄 To'liq DB eksport",         callback_data="excel_fulldb")],
     ])
 
 

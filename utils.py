@@ -218,6 +218,69 @@ async def generate_excel(x_data: list, m_data: list) -> str:
     return filename
 
 
+async def generate_full_excel(data: dict) -> str:
+    suffix = f"_DuselDB_{datetime.now().strftime('%d_%m_%Y')}.xlsx"
+    fd, filename = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+
+    wb = Workbook()
+
+    # Sheet 1: Xodimlar
+    ws = wb.active
+    ws.title = "Xodimlar"
+    ws.append(["User ID", "Ism", "Lavozim", "Kod", "Filial",
+               "Tel 1", "Tel 2", "Tug'ilgan kun", "Status", "Sana"])
+    for row in data.get("xodimlar", []):
+        ws.append(list(row))
+
+    # Sheet 2: Topshiriqlar
+    ws2 = wb.create_sheet("Topshiriqlar")
+    ws2.append(["ID", "User ID", "Ism", "Filial", "Topic ID",
+                "Holat", "Urgency", "Kelgan vaqt", "Javob vaqt"])
+    for row in data.get("topshiriqlar", []):
+        ws2.append(list(row))
+
+    # Sheet 3: Klientlar
+    ws3 = wb.create_sheet("Klientlar")
+    ws3.append(["ID", "Firma nomi", "Tel 1", "Tel 2", "INN", "Orienter",
+                "Lat", "Lon", "Manzil", "Kategoriya", "Do'kon turi",
+                "Distributor", "Agent kodi", "Vizit kun", "Chastota",
+                "Limit", "Brendlar", "Holat", "Rad sababi", "Sana", "Supervisor ID"])
+    for row in data.get("klientlar", []):
+        ws3.append(list(row))
+
+    # Sheet 4: So'rovlar
+    ws4 = wb.create_sheet("Sorovlar")
+    ws4.append(["ID", "Agent ID", "Agent Ism", "Tur", "Do'kon nomi",
+                "Yangi qiymat", "Lat", "Lon", "Izoh", "Status", "Sana"])
+    for row in data.get("sorovlar", []):
+        ws4.append(list(row))
+
+    # Sheet 5: Biriktirish
+    ws5 = wb.create_sheet("Biriktirish")
+    ws5.append(["Agent ID", "Agent Ism", "Checker ID", "Checker Ism",
+                "Filial", "Status"])
+    for row in data.get("biriktirish", []):
+        ws5.append(list(row))
+
+    # Sheet 6: Baholash
+    ws6 = wb.create_sheet("Baholash")
+    ws6.append(["ID", "Guruh ID", "Checker ID", "Checker Ism",
+                "Agent ID", "Agent Ism", "Yulduz", "Vaqt"])
+    for row in data.get("baholash", []):
+        ws6.append(list(row))
+
+    # Sheet 7: Audit Log
+    ws7 = wb.create_sheet("Audit Log")
+    ws7.append(["ID", "User ID", "Ism", "Rol", "Amal", "Nishon",
+                "Eski qiymat", "Yangi qiymat", "Status", "Vaqt"])
+    for row in data.get("audit_log", []):
+        ws7.append(list(row))
+
+    wb.save(filename)
+    return filename
+
+
 async def generate_klientlar_excel(rows: list) -> str:
     suffix = f"_Ochilgan_Klientlar_{datetime.now().strftime('%d_%m_%Y')}.xlsx"
     fd, filename = tempfile.mkstemp(suffix=suffix)
