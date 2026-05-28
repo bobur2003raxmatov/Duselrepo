@@ -28,6 +28,20 @@ from keyboards import (
 )
 from telegram.helpers import escape_markdown
 
+
+def _dokon_foto_id(dokon_nomi: str) -> str | None:
+    """Return photo file_id if dokon_nomi is a photo marker, else None."""
+    if dokon_nomi and dokon_nomi.startswith("PHOTO:"):
+        return dokon_nomi[6:]
+    return None
+
+
+def _dokon_display(dokon_nomi: str) -> str:
+    """Human-readable dokon name for card text."""
+    if _dokon_foto_id(dokon_nomi):
+        return "📸 Rasm yuborildi"
+    return dokon_nomi
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,7 +124,7 @@ def _card_lokatsiya(ism: str, dokon: str, lat, lon, sorov_id: int, lavozim: str 
     return (
         f"📍 *Lokatsiya o'zgartirish*\n"
         f"👤 {em(lavozim)}: {em(ism)}\n"
-        f"🏪 Dokon: {em(dokon)}\n"
+        f"🏪 Dokon: {em(_dokon_display(dokon))}\n"
         f"📌 Lokatsiya: [Google Maps]({map_link})\n"
         f"🆔 So'rov \\#{sorov_id}"
     )
@@ -120,7 +134,7 @@ def _card_telefon(ism: str, dokon: str, phone: str, sorov_id: int, lavozim: str 
     return (
         f"📞 *Raqam o'zgartirish*\n"
         f"👤 {em(lavozim)}: {em(ism)}\n"
-        f"🏪 Dokon: {em(dokon)}\n"
+        f"🏪 Dokon: {em(_dokon_display(dokon))}\n"
         f"📱 Raqam: `{em(phone)}`\n"
         f"🆔 So'rov \\#{sorov_id}"
     )
@@ -210,14 +224,25 @@ async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
         if media_ref:
             await _send_media(context, supervisor_id, media_ref)
 
+    dokon_nomi = sorov_data.get("dokon_nomi", "")
+    foto_id = _dokon_foto_id(dokon_nomi)
     try:
-        sent = await context.bot.send_message(
-            chat_id=supervisor_id,
-            text=card,
-            parse_mode="MarkdownV2",
-            reply_markup=sorov_tasdiqlash_kb(sorov_id),
-            disable_web_page_preview=True,
-        )
+        if foto_id:
+            sent = await context.bot.send_photo(
+                chat_id=supervisor_id,
+                photo=foto_id,
+                caption=card,
+                parse_mode="MarkdownV2",
+                reply_markup=sorov_tasdiqlash_kb(sorov_id),
+            )
+        else:
+            sent = await context.bot.send_message(
+                chat_id=supervisor_id,
+                text=card,
+                parse_mode="MarkdownV2",
+                reply_markup=sorov_tasdiqlash_kb(sorov_id),
+                disable_web_page_preview=True,
+            )
         await db.update_sorov_sup_msg_id(sorov_id, sent.message_id)
     except Exception as e:
         logger.warning(f"Supervisor ga sorov yuborishda xato: {e}")
@@ -233,18 +258,23 @@ async def _post_to_group(context, sorov_id: int, sorov_data: dict,
     dokon   = sorov_data.get("dokon_nomi", "—")
     lavozim = sorov_data.get("lavozim", "Agent")
 
+    foto_id = _dokon_foto_id(dokon)
     if tur == "lokatsiya":
         card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id, lavozim)
-        await context.bot.send_message(
-            chat_id=group_chat_id, text=card,
-            parse_mode="MarkdownV2", disable_web_page_preview=True,
-        )
+        if foto_id:
+            await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
+                                         caption=card, parse_mode="MarkdownV2")
+        else:
+            await context.bot.send_message(chat_id=group_chat_id, text=card,
+                                           parse_mode="MarkdownV2", disable_web_page_preview=True)
     elif tur == "telefon":
         card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id, lavozim)
-        await context.bot.send_message(
-            chat_id=group_chat_id, text=card,
-            parse_mode="MarkdownV2", disable_web_page_preview=True,
-        )
+        if foto_id:
+            await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
+                                         caption=card, parse_mode="MarkdownV2")
+        else:
+            await context.bot.send_message(chat_id=group_chat_id, text=card,
+                                           parse_mode="MarkdownV2", disable_web_page_preview=True)
     elif tur == "vizit":
         caption = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id, lavozim)
         foto_ids = sorov_data.get("fotolar", [])
@@ -282,18 +312,23 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int):
     agent_row = await db.get_xodim(agent_id)
     lavozim = agent_row[3] if agent_row else "Agent"  # (status, topic_id, ism, lavozim, ...)
 
+    foto_id = _dokon_foto_id(dokon)
     if tur == "lokatsiya":
         card = _card_lokatsiya(ism, dokon, lat, lon, sorov_id, lavozim)
-        await context.bot.send_message(
-            chat_id=group_chat_id, text=card,
-            parse_mode="MarkdownV2", disable_web_page_preview=True,
-        )
+        if foto_id:
+            await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
+                                         caption=card, parse_mode="MarkdownV2")
+        else:
+            await context.bot.send_message(chat_id=group_chat_id, text=card,
+                                           parse_mode="MarkdownV2", disable_web_page_preview=True)
     elif tur == "telefon":
         card = _card_telefon(ism, dokon, qiymat, sorov_id, lavozim)
-        await context.bot.send_message(
-            chat_id=group_chat_id, text=card,
-            parse_mode="MarkdownV2", disable_web_page_preview=True,
-        )
+        if foto_id:
+            await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
+                                         caption=card, parse_mode="MarkdownV2")
+        else:
+            await context.bot.send_message(chat_id=group_chat_id, text=card,
+                                           parse_mode="MarkdownV2", disable_web_page_preview=True)
     elif tur == "vizit":
         caption = _card_vizit(ism, izoh, sorov_id, lavozim)
         foto_ids = json.loads(sorov[8]) if sorov[8] else []
@@ -384,8 +419,7 @@ async def sorov_dokon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sorov_dokon_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]  # eng yuqori sifatli
-    context.user_data["sorov_data"]["dokon_nomi"] = f"[rasm:{photo.file_id}]"
-    context.user_data["sorov_data"]["dokon_foto_id"] = photo.file_id
+    context.user_data["sorov_data"]["dokon_nomi"] = f"PHOTO:{photo.file_id}"
     return await _sorov_dokon_next(update, context)
 
 
