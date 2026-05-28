@@ -20,8 +20,7 @@ from keyboards import (
     search_results_kb, xodim_profil_kb,
     biriktirish_list_kb, biriktir_detail_kb,
     biriktirish_agents_kb, biriktirish_checkers_kb, checker_sorov_kb,
-    urgency_kb, stars_kb, filial_filter_kb,
-    reyting_menu_kb, agent_reyting_kb,
+    urgency_kb,
     pending_xodimlar_inline, blocked_xodimlar_inline,
     klient_dokon_turi_kb, klient_confirm_kb,
     klientlar_search_page_inline,
@@ -42,6 +41,8 @@ from utils import (
     is_topic_valid, check_sla_timeout, generate_excel, generate_klientlar_excel, generate_full_excel,
     urgency_timeout_job, checker_timeout_job,
 )
+from telegram import InputMediaPhoto, InputMediaVideo
+
 from config import (
     ADMIN_ID, GROUP_CHAT_ID, FILIALLAR, LAVOZIMLAR,
     SLA_TIMEOUT_SEC, GROUP_TIMEOUT_SEC, PAGE_SIZE,
@@ -55,7 +56,7 @@ from config import (
     KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
     KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
     KLIENT_LIMIT, KLIENT_CONFIRM,
-    INSTR_MATN,
+    INSTR_MATN, ADD_ADMIN_ID,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,31 +135,60 @@ def _schedule_sla(context, group_id: int, ism: str):
 
 
 async def _send_buffered(
-    context, msg, uid: int, ism: str, lavozim: str, filial: str, topic_id: int, buf: list[str]
+    context, msg, uid: int, ism: str, lavozim: str, filial: str, topic_id: int, buf: list
 ):
-    """Buferdagi matn xabarlarini birlashtirib admin guruhiga yuboradi (1 ta so'rov sifatida)."""
-    now_str  = datetime.now().strftime("%H:%M")
-    combined = "\n".join(buf)
-
+    """Buferdagi barcha xabarlarni admin guruhiga yuboradi. Rasm/video media group sifatida."""
     group_id = await db.create_xabar_guruhi(uid, ism, filial, topic_id)
-    await db.insert_xabar(uid, ism, filial, "💬 Birlashtrilgan xabar", msg.message_id, group_id)
+    for entry in buf:
+        await db.insert_xabar(uid, ism, filial, entry.get("ctype", "💬 Xabar"), entry["msg_id"], group_id)
 
-    card = (
-        f"👤 Xodim: {ism}\n"
-        f"🏢 Filial: {filial}\n"
-        f"💬 Xabar:\n"
-        f'"{combined}"\n'
-        f"🕐 Vaqt: {now_str}\n"
-        f"🆔 So'rov #{group_id}"
-    )
-
-    try:
+    async def _post_to_group():
+        # Header kartasi
+        now_str = datetime.now().strftime("%H:%M")
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=topic_id,
-            text=card,
+            text=(
+                f"📬 *So'rov #{group_id}*\n"
+                f"👤 {em(ism)} | 🏢 {filial} | 🕐 {now_str}"
+            ),
+            parse_mode="Markdown",
             reply_markup=group_sorov_inline(group_id),
         )
+        # Xabarlarni ketma-ket yuborish: rasm/video → media group
+        i = 0
+        while i < len(buf):
+            item = buf[i]
+            if item["type"] in ("photo", "video"):
+                # Ketma-ket media yig'ish
+                media_batch = []
+                while i < len(buf) and buf[i]["type"] in ("photo", "video"):
+                    b = buf[i]
+                    if b["type"] == "photo":
+                        media_batch.append(InputMediaPhoto(media=b["file_id"], caption=b.get("caption") or ""))
+                    else:
+                        media_batch.append(InputMediaVideo(media=b["file_id"], caption=b.get("caption") or ""))
+                    i += 1
+                # InputMedia caption faqat birinchisida bo'lsin
+                for j in range(1, len(media_batch)):
+                    media_batch[j] = type(media_batch[j])(media=media_batch[j].media, caption="")
+                for chunk in range(0, len(media_batch), 10):
+                    await context.bot.send_media_group(
+                        chat_id=GROUP_CHAT_ID,
+                        message_thread_id=topic_id,
+                        media=media_batch[chunk:chunk + 10],
+                    )
+            else:
+                await context.bot.copy_message(
+                    chat_id=GROUP_CHAT_ID,
+                    from_chat_id=item["chat_id"],
+                    message_id=item["msg_id"],
+                    message_thread_id=topic_id,
+                )
+                i += 1
+
+    try:
+        await _post_to_group()
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=f"📬 *Yangi topshiriq!*\n👤 {em(ism)}  |  🔢 #{group_id}",
@@ -171,14 +201,12 @@ async def _send_buffered(
         )
 
         checker_id = await db.get_biriktirish(uid) if lavozim == "Agent" else None
-
         if checker_id:
             try:
                 await context.bot.send_message(
                     chat_id=uid,
                     text=f"#{group_id} topshiriqning muhimlilik darajasini tanlang:",
                     reply_markup=urgency_kb(group_id),
-                    disable_notification=True,
                 )
             except Exception:
                 pass
@@ -196,18 +224,6 @@ async def _send_buffered(
             )
         else:
             _schedule_sla(context, group_id, ism)
-            if lavozim == "Agent":
-                try:
-                    await context.bot.send_message(
-                        chat_id=ADMIN_ID,
-                        text=(
-                            f"⚠️ *{em(ism)}* uchun checker biriktirilmagan!\n"
-                            f"'🔗 Biriktirish' menyusidan biriktiring."
-                        ),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    pass
 
     except BadRequest as e:
         if "message thread not found" in str(e).lower():
@@ -224,16 +240,10 @@ async def _send_buffered(
             )
         else:
             logger.error(f"Buferlangan xabar yuborishda xato (uid={uid}): {e}")
-            await msg.reply_text(
-                "❌ Xato yuz berdi. Qayta urinib ko'ring.",
-                reply_markup=_role_keyboard(lavozim),
-            )
+            await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.", reply_markup=_role_keyboard(lavozim))
     except Exception as e:
         logger.error(f"Buferlangan xabar yuborishda xato (uid={uid}): {e}")
-        await msg.reply_text(
-            "❌ Xato yuz berdi. Qayta urinib ko'ring.",
-            reply_markup=_role_keyboard(lavozim),
-        )
+        await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.", reply_markup=_role_keyboard(lavozim))
 
 
 def admin_only(func):
@@ -565,140 +575,45 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if rate_limited(uid):
         return
 
-    # ── Matn xabarlarni buferlash ─────────────────────────────────
-    if msg.text:
-        buf = context.user_data.setdefault("msg_buffer", [])
-        buf.append(msg.text)
-        if len(buf) == 1:
-            await msg.reply_text(
-                "✅ Xabar qo'shildi. Yana qo'shishingiz mumkin yoki \"📤 Yuborish\" tugmasini bosing:",
-                reply_markup=_yuborish_kb(),
-            )
-        else:
-            await msg.reply_text(f"✅ {len(buf)}-xabar qo'shildi.")
-        return
-
-    # ── Non-text xabarlar: mavjud oqim ───────────────────────────
-    if msg.photo:        ctype = "📷 Rasm"
-    elif msg.video:      ctype = "🎥 Video"
-    elif msg.document:   ctype = "📄 Fayl"
-    elif msg.voice:      ctype = "🎙 Ovozli xabar"
-    elif msg.video_note: ctype = "⭕ Video-xabar"
-    elif msg.sticker:    ctype = "🎭 Sticker"
-    else:                ctype = "💬 Matn"
-
-    # Reply konteksti (admin xabariga reply qilyaptimi?)
-    reply_to_group_id = None
-    if msg.reply_to_message:
-        reply_to_group_id = await db.get_group_msg_id_by_private(uid, msg.reply_to_message.message_id)
-
-    # Aktiv guruh bor-yo'qligini tekshirish (oxirgi 60 soniya)
-    active = await db.get_active_group(uid)
-
-    async def _fwd(t_id: int):
-        if reply_to_group_id:
-            try:
-                return await context.bot.copy_message(
-                    chat_id=GROUP_CHAT_ID,
-                    from_chat_id=msg.chat_id,
-                    message_id=msg.message_id,
-                    message_thread_id=t_id,
-                    reply_parameters=ReplyParameters(message_id=reply_to_group_id),
-                )
-            except BadRequest:
-                pass
-        return await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=t_id)
-
-    if active:
-        # ── Mavjud guruhga qo'shish — faqat DB ga yoziladi ──────
-        group_id, _ = active
-        task_id = await db.insert_xabar(uid, ism, filial, ctype, msg.message_id, group_id)
-        msg_count = await db.count_group_msgs(group_id)
-        await msg.reply_text(f"✅ #{group_id}-guruhga qo'shildi ({msg_count}-xabar).")
-
+    # ── Barcha xabar turlarini buferlash ─────────────────────────
+    if msg.photo:
+        entry = {"type": "photo", "msg_id": msg.message_id, "chat_id": msg.chat_id,
+                 "file_id": msg.photo[-1].file_id, "caption": msg.caption}
+        ctype = "📷 Rasm"
+    elif msg.video:
+        entry = {"type": "video", "msg_id": msg.message_id, "chat_id": msg.chat_id,
+                 "file_id": msg.video.file_id, "caption": msg.caption}
+        ctype = "🎥 Video"
+    elif msg.text:
+        entry = {"type": "text", "msg_id": msg.message_id, "chat_id": msg.chat_id, "text": msg.text}
+        ctype = "💬 Matn"
+    elif msg.document:
+        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
+        ctype = "📄 Fayl"
+    elif msg.voice:
+        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
+        ctype = "🎙 Ovozli xabar"
+    elif msg.video_note:
+        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
+        ctype = "⭕ Video-xabar"
+    elif msg.sticker:
+        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
+        ctype = "🎭 Sticker"
     else:
-        # ── Yangi guruh ochish — faqat bitta summary karta ───────
-        group_id = await db.create_xabar_guruhi(uid, ism, filial, topic_id)
-        task_id  = await db.insert_xabar(uid, ism, filial, ctype, msg.message_id, group_id)
+        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
+        ctype = "💬 Xabar"
 
-        try:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                message_thread_id=topic_id,
-                text=f"#{group_id}-guruh holati:",
-                reply_markup=group_sorov_inline(group_id),
-            )
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"📬 *Yangi topshiriq!*\n👤 {ism}  |  🔢 #{group_id}",
-                parse_mode="Markdown",
-                reply_markup=group_sorov_inline(group_id),
-            )
-            await msg.reply_text(
-                f"✅ #{group_id}-sonli so'rovingiz qabul qilindi. Admin javobini kuting."
-            )
-
-            # Biriktirish: Agent bo'lsa checker borligini tekshir
-            checker_id = await db.get_biriktirish(uid) if lavozim == "Agent" else None
-
-            if checker_id:
-                try:
-                    await context.bot.send_message(
-                        chat_id=uid,
-                        text=f"#{group_id} topshiriqning muhimlilik darajasini tanlang:",
-                        reply_markup=urgency_kb(group_id),
-                        disable_notification=True,
-                    )
-                except Exception:
-                    pass
-                context.job_queue.run_once(
-                    urgency_timeout_job,
-                    when=URGENCY_TIMEOUT_SEC,
-                    data={"group_id": group_id, "checker_id": checker_id, "ism": ism},
-                    name=f"urgency_{group_id}",
-                )
-                context.job_queue.run_once(
-                    checker_timeout_job,
-                    when=CHECKER_TIMEOUT_SEC,
-                    data={"group_id": group_id, "ism": ism},
-                    name=f"checker_timeout_{group_id}",
-                )
-            else:
-                _schedule_sla(context, group_id, ism)
-                if lavozim == "Agent":
-                    try:
-                        await context.bot.send_message(
-                            chat_id=ADMIN_ID,
-                            text=(
-                                f"⚠️ *{em(ism)}* uchun checker biriktirilmagan!\n"
-                                f"'🔗 Biriktirish' menyusidan biriktiring."
-                            ),
-                            parse_mode="Markdown",
-                        )
-                    except Exception:
-                        pass
-
-        except BadRequest as e:
-            if "message thread not found" in str(e).lower():
-                await db.reset_topic(uid)
-                await msg.reply_text(
-                    "⚠️ Guruhdagi kanalingiz o'chirilgan. Qayta tasdiqlash kutilmoqda."
-                )
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=(
-                        f"🔄 *Mavzusi o'chirilgan xodim:*\n\n"
-                        f"👤 {ism} | {lavozim}"
-                    ),
-                    parse_mode="Markdown",
-                    reply_markup=tasdiq_inline(uid),
-                )
-            else:
-                logger.error(f"Yangi guruh ochishda xato (uid={uid}): {e}")
-                await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.")
-        except Exception as e:
-            logger.error(f"Yangi guruh ochishda xato (uid={uid}): {e}")
-            await msg.reply_text("❌ Xato yuz berdi. Qayta urinib ko'ring.")
+    entry["ctype"] = ctype
+    buf = context.user_data.setdefault("msg_buffer", [])
+    buf.append(entry)
+    if len(buf) == 1:
+        await msg.reply_text(
+            f"✅ {ctype} qo'shildi. Yana qo'shishingiz mumkin yoki \"📤 Yuborish\" tugmasini bosing:",
+            reply_markup=_yuborish_kb(),
+        )
+    else:
+        await msg.reply_text(f"✅ {len(buf)}-xabar qo'shildi ({ctype}).")
+    return
 
 
 # ══════════════════════════════════════════════
@@ -1004,6 +919,14 @@ async def _cb_group_action(query, context, action: str, group_id: int):
             reply_markup=group_detail_back_inline(group_id),
         )
 
+    elif action == "rad":
+        context.user_data["grp_reject_id"] = group_id
+        await query.edit_message_text(
+            f"❌ *#{group_id}-so'rovni rad etish*\n\n"
+            "Rad etish sababini yozing:",
+            parse_mode="Markdown",
+        )
+
     elif action == "back":
         kb = (group_bajarildi_inline(group_id) if group[4] == "jarayonda"
               else group_sorov_inline(group_id))
@@ -1120,42 +1043,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Checker ga urgency xabari yuborishda xato: {e}")
         return
 
-    # ── Yulduz reyting (checker tomonidan) ────────────────────────
-    if data.startswith("star_"):
-        parts = data.split("_")
-        if len(parts) < 3:
-            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
-            return
-        try:
-            group_id = int(parts[1])
-            yulduz = int(parts[2])
-        except (IndexError, ValueError):
-            await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
-            return
-        checker  = query.from_user.id
-        group    = await db.get_group_info(group_id)
-        if not group:
-            await query.edit_message_text("❌ Guruh topilmadi.")
-            return
-        agent_uid = group[0]
-        await db.add_baholash(group_id, checker, agent_uid, yulduz)
-        await db.update_checker_faollik(checker)
-        stars_str = "⭐" * yulduz
-        await query.edit_message_text(f"✅ #{group_id} — {stars_str} bilan baholandi!")
-        try:
-            summary = await db.get_agent_rating_summary(agent_uid)
-            await context.bot.send_message(
-                chat_id=agent_uid,
-                text=(
-                    f"⭐ #{group_id} topshiriqingiz *{stars_str}* bilan baholandi!\n"
-                    f"Sizning o'rtacha reytingingiz: *{summary['avg']}* ({summary['total']} ta baho)"
-                ),
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
-        return
-
     # ── Checker callback (admin bo'lmagan xodimlar uchun) ─────────
     if data.startswith("bir_tasd_"):
         group_id = safe_callback_int(data, "_", 2)
@@ -1180,15 +1067,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             j.schedule_removal()
 
         await query.edit_message_text(f"✅ #{group_id} topshiriqni tasdiqladingiz!")
-        # Feature 17: Baholash so'rash
-        try:
-            await context.bot.send_message(
-                chat_id=checker,
-                text=f"#{group_id} topshiriqni baholang (1-5 yulduz):",
-                reply_markup=stars_kb(group_id),
-            )
-        except Exception:
-            pass
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
@@ -1239,30 +1117,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.from_user.id != ADMIN_ID:
-        return
-
-    if data == "reyting_agent":
-        await _send_agent_reyting(query.edit_message_text)
-        return
-
-    if data == "reyting_filial":
-        await _send_filial_leaderboard(query.edit_message_text, "haftalik")
-        return
-
-    if data == "reyting_menu":
-        await _show_reyting_menu(query.edit_message_text)
-        return
-
-    if data == "reyting_close":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        return
-
-    if data.startswith("filial_lider_"):
-        period = data.split("_")[2]
-        await _send_filial_leaderboard(query.edit_message_text, period)
         return
 
     if data.startswith("xodim_profil_"):
@@ -1327,7 +1181,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = await db.get_blocked_xodimlar()
         await _send_blocked_page(query.edit_message_text, rows, page)
 
-    elif data.startswith(("grp_prog_", "grp_done_", "grp_detail_", "grp_back_")):
+    elif data.startswith(("grp_prog_", "grp_done_", "grp_detail_", "grp_back_", "grp_rad_")):
         parts = data.split("_")
         if len(parts) < 3:
             await query.answer("❌ Noto'g'ri ma'lumot.", show_alert=True)
@@ -1619,23 +1473,34 @@ async def admin_excel_eksport(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not await db.is_admin(uid):
-        return
-    args = context.args
-    if not args or not args[0].lstrip("-").isdigit():
-        await update.message.reply_text(
-            "➕ *Admin qo'shish*\n\nFoydalanish: `/add_admin <user_id>`\n\nMisol: `/add_admin 123456789`\n\n💡 User ID ni bilish uchun @userinfobot ga `/start` yuboring.",
-            parse_mode="Markdown",
-        )
-        return
-    new_id = int(args[0])
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "➕ *Admin qo'shish*\n\nYangi adminning *User ID* sini yuboring:\n\n"
+        "💡 User ID ni bilish uchun @userinfobot ga `/start` yuboring.",
+        parse_mode="Markdown",
+    )
+    return ADD_ADMIN_ID
+
+
+async def add_admin_id_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await db.is_admin(uid):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    if not text.lstrip("-").isdigit():
+        await update.message.reply_text("❌ Faqat son kiriting (masalan: `123456789`).", parse_mode="Markdown")
+        return ADD_ADMIN_ID
+    new_id = int(text)
     if await db.is_admin(new_id):
         await update.message.reply_text(f"⚠️ `{new_id}` allaqachon admin.", parse_mode="Markdown")
-        return
+        return ConversationHandler.END
     await db.add_admin(new_id)
     await update.message.reply_text(
         f"✅ `{new_id}` admin sifatida qo'shildi.\nU `/start` bosishi kerak.",
         parse_mode="Markdown",
+        reply_markup=admin_kb(),
     )
+    return ConversationHandler.END
 
 
 async def instruksiya_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1997,7 +1862,6 @@ async def _show_agent_detail(send_fn, agent_id: int):
             checker_ism = f"{c_row[2]} _(faollik: {last[:16] if last else '—'})_"
 
     stats  = await db.get_agent_today_stats(agent_id)
-    rating = await db.get_agent_rating_summary(agent_id)
     STATUS_TEXT = {"approved": "✅ Faol", "pending": "⏳ Kutilmoqda", "blocked": "🚫 Bloklangan"}
 
     matn = (
@@ -2005,8 +1869,7 @@ async def _show_agent_detail(send_fn, agent_id: int):
         f"💼 {em(lavozim)} | 🔑 `{em(kod)}` | 🏢 {em(filial)}\n"
         f"📱 {em(tel1 or '—')} | 🆔 `{uid}` | {STATUS_TEXT.get(status,'?')}\n\n"
         f"🔗 Checker: {checker_ism or '—'}\n\n"
-        f"📊 Bugun: *{stats['bugun']}* ta | ✅ *{stats['bajarildi']}* bajarildi\n"
-        f"⭐ Reyting: *{rating['avg']}* ({rating['total']} baho) | Bu hafta: *{rating['haftalik'] or '—'}*"
+        f"📊 Bugun: *{stats['bugun']}* ta | ✅ *{stats['bajarildi']}* bajarildi"
     )
     await send_fn(
         matn,
@@ -2226,68 +2089,6 @@ async def biriktir_checker_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await _show_agent_detail(query.message.reply_text, agent_id)
     return BIRIKTIR_DETAIL
-
-
-# ══════════════════════════════════════════════
-# REYTING VA FILIAL LEADERBOARD (Features 17, 19)
-# ══════════════════════════════════════════════
-MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
-
-
-async def _show_reyting_menu(send_fn):
-    await send_fn(
-        "🏆 *Reyting menyusi*\n\n_Bo'limni tanlang:_",
-        parse_mode="Markdown",
-        reply_markup=reyting_menu_kb(),
-    )
-
-
-async def _send_agent_reyting(send_fn):
-    rows = await db.get_agent_leaderboard()
-    matn = "⭐ *Agent Reytingi*\n\n"
-    if not rows:
-        matn += "_Hali hech qanday baho yo'q._"
-    else:
-        for i, r in enumerate(rows, 1):
-            uid, ism, filial, avg, total, haftalik = r
-            medal = MEDALS.get(i, f"#{i}")
-            haftalik_str = f"{haftalik}" if haftalik else "—"
-            matn += (
-                f"{medal} *{em(ism)}* | {em(filial)}\n"
-                f"   Umumiy: {'⭐' * round(avg)} *{avg}* ({total} baho)"
-                f"  |  Bu hafta: {haftalik_str}\n\n"
-            )
-    await send_fn(matn, parse_mode="Markdown", reply_markup=agent_reyting_kb())
-
-
-async def _send_filial_leaderboard(send_fn, period: str = "haftalik"):
-    rows = await db.get_filial_stats(period)
-    PERIOD_LABEL = {"haftalik": "Haftalik", "oylik": "Oylik", "yillik": "Yillik", "hammasi": "Jami"}
-    label = PERIOD_LABEL.get(period, period)
-    matn = f"🏆 *Filial Reytingi — {label}*\n\n"
-    if not rows:
-        matn += "_Ma'lumot yo'q._"
-    else:
-        for i, r in enumerate(rows, 1):
-            filial, agents, topshiriq, bajarildi, avg_r, avg_vaqt = r
-            medal = MEDALS.get(i, f"{i}.")
-            stars = ("⭐" * round(avg_r)) if avg_r else "—"
-            vaqt_str = f"{avg_vaqt:.0f} daq" if avg_vaqt else "—"
-            matn += (
-                f"{medal} *{em(filial or '?')}*\n"
-                f"   👥 Agentlar: {agents}  |  📋 Topshiriq: {topshiriq or 0}\n"
-                f"   ✅ Bajarildi: {bajarildi or 0}  |  ⭐ {stars}  |  ⏱ {vaqt_str}\n\n"
-            )
-    await send_fn(
-        matn,
-        parse_mode="Markdown",
-        reply_markup=filial_filter_kb(period),
-    )
-
-
-@admin_only
-async def admin_reyting_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _show_reyting_menu(update.message.reply_text)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -3105,6 +2906,28 @@ async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode="Markdown",
             reply_markup=klientlar_search_page_inline(results, 0),
         )
+        return
+
+    # Handle group (so'rov) rejection reason
+    grp_reject_id = context.user_data.pop("grp_reject_id", None)
+    if grp_reject_id:
+        reason = update.message.text.strip()
+        grp = await db.get_group_info(grp_reject_id)
+        if grp:
+            emp_uid, emp_ism = grp[0], grp[1]
+            await db.update_group_holat(grp_reject_id, "rad etildi")
+            await update.message.reply_text(f"❌ #{grp_reject_id}-so'rov rad etildi!")
+            try:
+                await context.bot.send_message(
+                    chat_id=emp_uid,
+                    text=(
+                        f"❌ *#{grp_reject_id}-sonli so'rovingiz rad etildi.*\n\n"
+                        f"_Sabab: {em(reason)}_"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.warning(f"Rad xabari yuborishda xato (uid={emp_uid}): {e}")
         return
 
     klient_id = context.user_data.get("klient_reject_id")

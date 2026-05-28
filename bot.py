@@ -51,7 +51,7 @@ from config import (
     SOROV_FOTO, SOROV_IZOH,
     SOROV_BATCH_COLLECT, SOROV_BATCH_PREVIEW,
     LIMIT_DOKON, LIMIT_SUMMA,
-    INSTR_MATN,
+    INSTR_MATN, ADD_ADMIN_ID,
 )
 print("config imported OK", flush=True)
 
@@ -79,7 +79,6 @@ from handlers import (
     biriktir_change_cb, biriktir_rm_cb, biriktir_block_cb,
     biriktir_edit_field_cb, biriktir_edit_value_handler,
     biriktir_checker_cb,
-    admin_reyting_menu,
     edit_field, edit_value,
     _xodim_list_page_cb, _xodim_info_cb, _xodim_edit_cb, _xodim_search_start_cb,
     new_client_command, klient_rasm, klient_firma_nomi, klient_telefon1,
@@ -92,7 +91,7 @@ from handlers import (
     admin_tarix, tarix_filter_callback,
     topic_closed_handler,
     admin_upload_db,
-    add_admin_command,
+    add_admin_command, add_admin_id_receive,
     instruksiya_cmd,
     admin_instruksiya_lavozim_cb,
     admin_instruksiya_edit_cb,
@@ -300,14 +299,24 @@ def build_application() -> Application:
     app.add_handler(limit_conv)
     app.add_handler(instr_conv)
 
-    app.add_handler(MessageHandler(filters.Regex(r"^🏆 Reyting$"),                 admin_reyting_menu))
     app.add_handler(MessageHandler(filters.Regex(r"^📋 Tarix$"),                   admin_tarix))
     app.add_handler(MessageHandler(filters.Regex(r"^📊 Statistika$"),             admin_statistika))
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
+    # ── Admin qo'shish ConversationHandler ──────────────────────────
+    add_admin_conv = ConversationHandler(
+        entry_points=[CommandHandler("add_admin", add_admin_command)],
+        states={
+            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id_receive)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+        per_message=False,
+    )
+    app.add_handler(add_admin_conv)
+
     app.add_handler(CommandHandler("upload_db",   admin_upload_db))
-    app.add_handler(CommandHandler("add_admin",   add_admin_command))
     from config import ADMIN_ID
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("db") & filters.Chat(ADMIN_ID),

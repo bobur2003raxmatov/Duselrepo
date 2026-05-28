@@ -178,7 +178,8 @@ LIMIT_SUMMA = 48
 
 BATCH_TIMEOUT_SEC = 180  # 3 daqiqa faolsiz → auto-submit
 
-INSTR_MATN = 60  # Admin instruksiya tahrirlash
+INSTR_MATN    = 60  # Admin instruksiya tahrirlash
+ADD_ADMIN_ID  = 61  # /add_admin 2-qadam
 
 # /instruksiya video placeholder (update file_id here once video is uploaded)
 INSTRUKSIYA_VIDEO_ID = ""

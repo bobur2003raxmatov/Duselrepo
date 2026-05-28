@@ -48,9 +48,6 @@ from handlers._core import (
     biriktir_block_cb, biriktir_edit_field_cb,
     biriktir_edit_value_handler, biriktir_checker_cb,
 
-    # Reyting
-    admin_reyting_menu,
-
     # Klient ro'yxatdan o'tkazish
     new_client_command,
     klient_rasm, klient_firma_nomi, klient_telefon1, klient_telefon2,
@@ -64,7 +61,7 @@ from handlers._core import (
     # Topic o'chirilish va DB boshqaruvi
     topic_closed_handler,
     admin_upload_db,
-    add_admin_command,
+    add_admin_command, add_admin_id_receive,
 
     # Instruksiya
     instruksiya_cmd,

@@ -133,7 +133,7 @@ def admin_kb() -> ReplyKeyboardMarkup:
             ["📊 Statistika",              "👥 Xodimlar"],
             ["⏳ Kutilayotgan so'rovlar",  "🚫 Bloklanganlar"],
             ["📥 Excel",                   "🔗 Biriktirish"],
-            ["🏆 Reyting",                 "📋 Tarix"],
+            ["📋 Tarix"],
         ],
         resize_keyboard=True,
     )
@@ -225,10 +225,13 @@ def xodimlar_edit_page_inline(rows: list, page: int) -> InlineKeyboardMarkup:
 def group_sorov_inline(group_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🔄 Jarayonda", callback_data=f"grp_prog_{group_id}"),
-            InlineKeyboardButton("✅ Bajarildi",  callback_data=f"grp_done_{group_id}"),
+            InlineKeyboardButton("🔄 Jarayonda",   callback_data=f"grp_prog_{group_id}"),
+            InlineKeyboardButton("✅ Bajarildi",    callback_data=f"grp_done_{group_id}"),
         ],
-        [InlineKeyboardButton("📋 Tafsilotlar", callback_data=f"grp_detail_{group_id}")],
+        [
+            InlineKeyboardButton("❌ Rad qilindi",  callback_data=f"grp_rad_{group_id}"),
+            InlineKeyboardButton("📋 Tafsilotlar",  callback_data=f"grp_detail_{group_id}"),
+        ],
     ])
 
 
