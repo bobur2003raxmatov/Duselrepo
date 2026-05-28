@@ -49,7 +49,7 @@ from config import (
     EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
     BIRIKTIR_EDIT_VALUE,
-    DOKON_TURLARI, DOKON_SLUGLARI, AGENT_PREFIX_REGIONS,
+    DOKON_TURLARI, DOKON_SLUGLARI, AGENT_PREFIX_REGIONS, AGENT_DATABASE,
     KLIENT_RASM, KLIENT_FIRMA_NOMI, KLIENT_TELEFON1, KLIENT_TELEFON2,
     KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
     KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
@@ -351,15 +351,28 @@ async def lavozim_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return FILIAL
 
 
-def _match_prefix(kod: str):
-    """Return (prefix, region) if kod starts with a known prefix, else None.
-    Tries 3-char prefix first (e.g. QSH), then 2-char (e.g. AN)."""
-    upper = kod.upper()
-    for length in (3, 2):
-        prefix = upper[:length]
-        region = AGENT_PREFIX_REGIONS.get(prefix)
-        if region:
-            return prefix, region
+def _match_agent_code(kod: str):
+    """
+    Returns (agent_name_or_None, region) if code is valid, else None.
+
+    Valid if:
+    - Exact match in AGENT_DATABASE (case-insensitive) → (name, region)
+    - OR starts with a known 2-char prefix AND 3rd char is NOT a letter → (None, region)
+      e.g. "AN1", "AN100", "AN" → valid; "ANJ", "ANJ12" → invalid
+    """
+    upper = kod.strip().upper()
+
+    # 1. Exact match → return name + region
+    if upper in AGENT_DATABASE:
+        region = AGENT_PREFIX_REGIONS.get(upper[:2])
+        return AGENT_DATABASE[upper], region
+
+    # 2. Prefix match: first 2 chars known, 3rd char (if any) must not be a letter
+    prefix = upper[:2]
+    region = AGENT_PREFIX_REGIONS.get(prefix)
+    if region and (len(upper) <= 2 or not upper[2].isalpha()):
+        return None, region
+
     return None
 
 
@@ -367,23 +380,47 @@ async def kod_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kod = update.message.text.strip()
     lavozim = context.user_data.get("lavozim", "")
 
-    if lavozim in ("Agent", "Supervisor"):
-        match = _match_prefix(kod)
-        if not match:
-            prefixes = ", ".join(sorted(AGENT_PREFIX_REGIONS))
+    if lavozim == "Agent":
+        result = _match_agent_code(kod)
+        if not result:
             await update.message.reply_text(
-                f"❌ Noto'g'ri kod prefiksi.\n"
-                f"Qabul qilinadigan prefikslar: {prefixes}\n\n"
-                "Qayta kiriting:"
+                "❌ Bunday kod topilmadi. To'g'ri agent kodini kiriting:"
             )
             return KOD
-        _, region = match
-        context.user_data["kod"] = kod
+        agent_name, region = result
+        context.user_data["kod"] = kod.upper()
+        context.user_data["filial"] = region
+        if agent_name:
+            context.user_data["ism"] = agent_name
+        welcome = (
+            f"✅ *{agent_name} {kod.upper()} Xush kelibsiz!*\n"
+            f"📍 Hudud: *{region}*\n\n"
+            "📱 Telefon raqamingizni kiriting:"
+            if agent_name else
+            f"✅ Kod tasdiqlandi: *{kod.upper()}*\n"
+            f"📍 Hudud: *{region}*\n\n"
+            "📱 Telefon raqamingizni kiriting:"
+        )
+        await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=telefon_kb())
+        return TELEFON
+
+    if lavozim == "Supervisor":
+        upper = kod.strip().upper()
+        prefix = upper[:2]
+        region = AGENT_PREFIX_REGIONS.get(prefix)
+        if not region or (len(upper) > 2 and upper[2].isalpha()):
+            await update.message.reply_text(
+                "❌ Bunday supervisor kodi topilmadi.\n"
+                "Format: *XX100* _(Masalan: AN100, SM100)_\n\nQayta kiriting:",
+                parse_mode="Markdown",
+            )
+            return KOD
+        context.user_data["kod"] = upper
         context.user_data["filial"] = region
         await update.message.reply_text(
-            f"✅ Kod tasdiqlandi: *{kod}*\n"
-            f"📍 Hudud avtomatik tanlandi: *{region}*\n\n"
-            "📱 Telefon raqamingizni quyidagi tugma orqali yuboring:",
+            f"✅ Supervisor kodi tasdiqlandi: *{upper}*\n"
+            f"📍 Hudud: *{region}*\n\n"
+            "📱 Telefon raqamingizni kiriting:",
             parse_mode="Markdown",
             reply_markup=telefon_kb(),
         )
