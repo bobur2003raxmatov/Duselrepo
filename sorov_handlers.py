@@ -287,64 +287,76 @@ async def _post_to_group(context, sorov_id: int, sorov_data: dict,
     tur     = sorov_data.get("tur", "")
     dokon   = sorov_data.get("dokon_nomi", "—")
     lavozim = sorov_data.get("lavozim", "Agent")
-    thread  = {"message_thread_id": topic_id} if topic_id else {}
-
     foto_id = _dokon_foto_id(dokon)
-    if tur == "lokatsiya":
-        card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id, lavozim)
-        if foto_id:
-            await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
-                                         caption=card, parse_mode="MarkdownV2", **thread)
-        else:
-            await context.bot.send_message(chat_id=group_chat_id, text=card,
-                                           parse_mode="MarkdownV2", disable_web_page_preview=True, **thread)
-    elif tur == "telefon":
-        card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id, lavozim)
-        if foto_id:
-            await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
-                                         caption=card, parse_mode="MarkdownV2", **thread)
-        else:
-            await context.bot.send_message(chat_id=group_chat_id, text=card,
-                                           parse_mode="MarkdownV2", disable_web_page_preview=True, **thread)
-    elif tur == "vizit":
-        caption = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id, lavozim)
-        foto_ids  = sorov_data.get("fotolar", [])
-        video_ids = sorov_data.get("videolar", [])
-        all_media = (
-            [InputMediaPhoto(fid) for fid in foto_ids] +
-            [InputMediaVideo(fid) for fid in video_ids]
-        )
-        if len(all_media) == 1:
-            if foto_ids:
-                await context.bot.send_photo(
-                    chat_id=group_chat_id, photo=foto_ids[0],
-                    caption=caption, parse_mode="MarkdownV2", **thread
-                )
+
+    async def _send(thread: dict):
+        if tur == "lokatsiya":
+            card = _card_lokatsiya(ism, dokon, sorov_data.get("lat"), sorov_data.get("lon"), sorov_id, lavozim)
+            if foto_id:
+                await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
+                                             caption=card, parse_mode="MarkdownV2", **thread)
             else:
-                await context.bot.send_video(
-                    chat_id=group_chat_id, video=video_ids[0],
-                    caption=caption, parse_mode="MarkdownV2", **thread
-                )
-        elif all_media:
-            all_media[0] = type(all_media[0])(
-                media=all_media[0].media, caption=caption, parse_mode="MarkdownV2"
+                await context.bot.send_message(chat_id=group_chat_id, text=card,
+                                               parse_mode="MarkdownV2", disable_web_page_preview=True, **thread)
+        elif tur == "telefon":
+            card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id, lavozim)
+            if foto_id:
+                await context.bot.send_photo(chat_id=group_chat_id, photo=foto_id,
+                                             caption=card, parse_mode="MarkdownV2", **thread)
+            else:
+                await context.bot.send_message(chat_id=group_chat_id, text=card,
+                                               parse_mode="MarkdownV2", disable_web_page_preview=True, **thread)
+        elif tur == "vizit":
+            caption = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id, lavozim)
+            foto_ids  = sorov_data.get("fotolar", [])
+            video_ids = sorov_data.get("videolar", [])
+            all_media = (
+                [InputMediaPhoto(fid) for fid in foto_ids] +
+                [InputMediaVideo(fid) for fid in video_ids]
             )
-            for chunk_start in range(0, len(all_media), 10):
-                await context.bot.send_media_group(
-                    chat_id=group_chat_id, media=all_media[chunk_start:chunk_start + 10], **thread
+            if len(all_media) == 1:
+                if foto_ids:
+                    await context.bot.send_photo(
+                        chat_id=group_chat_id, photo=foto_ids[0],
+                        caption=caption, parse_mode="MarkdownV2", **thread
+                    )
+                else:
+                    await context.bot.send_video(
+                        chat_id=group_chat_id, video=video_ids[0],
+                        caption=caption, parse_mode="MarkdownV2", **thread
+                    )
+            elif all_media:
+                all_media[0] = type(all_media[0])(
+                    media=all_media[0].media, caption=caption, parse_mode="MarkdownV2"
                 )
-        else:
+                for chunk_start in range(0, len(all_media), 10):
+                    await context.bot.send_media_group(
+                        chat_id=group_chat_id, media=all_media[chunk_start:chunk_start + 10], **thread
+                    )
+            else:
+                await context.bot.send_message(
+                    chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2", **thread
+                )
+        else:  # boshqa
+            card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id, lavozim)
             await context.bot.send_message(
-                chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2", **thread
+                chat_id=group_chat_id, text=card, parse_mode="MarkdownV2", **thread
             )
-    else:  # boshqa
-        card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id, lavozim)
-        await context.bot.send_message(
-            chat_id=group_chat_id, text=card, parse_mode="MarkdownV2", **thread
-        )
-        media_ref = sorov_data.get("media_ref") or sorov_data.get("yangi_qiymat")
-        if media_ref:
-            await _send_media(context, group_chat_id, media_ref)
+            media_ref = sorov_data.get("media_ref") or sorov_data.get("yangi_qiymat")
+            if media_ref:
+                await _send_media(context, group_chat_id, media_ref)
+
+    thread = {"message_thread_id": topic_id} if topic_id else {}
+    try:
+        await _send(thread)
+    except Exception as e:
+        err_str = str(e).lower()
+        if topic_id and ("thread" in err_str or "topic" in err_str or "message_thread" in err_str):
+            logger.warning(f"Topic {topic_id} yopiq/yo'q, umumiy topicga qayta yubormoqda: {e}")
+            await _send({})
+            thread = {}
+        else:
+            raise
 
     await db.update_sorov_group_id(sorov_id, group_chat_id)
     try:
