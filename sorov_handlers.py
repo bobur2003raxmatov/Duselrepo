@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime
 
-from telegram import Update, InputMediaPhoto
+from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import ContextTypes, ConversationHandler
 
 import database as db
@@ -210,14 +210,21 @@ async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
         card = _card_telefon(ism, dokon, sorov_data.get("yangi_qiymat", "—"), sorov_id, lavozim)
     elif tur == "vizit":
         card = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id, lavozim)
-        # Send photos to supervisor first so they can see them before approving
-        foto_ids = sorov_data.get("fotolar", [])
-        if foto_ids:
+        # Send photo+video to supervisor before approval card
+        foto_ids  = sorov_data.get("fotolar", [])
+        video_ids = sorov_data.get("videolar", [])
+        all_media = (
+            [InputMediaPhoto(fid) for fid in foto_ids] +
+            [InputMediaVideo(fid) for fid in video_ids]
+        )
+        if all_media:
             try:
-                media = [InputMediaPhoto(fid) for fid in foto_ids]
-                await context.bot.send_media_group(chat_id=supervisor_id, media=media)
+                for chunk_start in range(0, len(all_media), 10):
+                    await context.bot.send_media_group(
+                        chat_id=supervisor_id, media=all_media[chunk_start:chunk_start + 10]
+                    )
             except Exception as e:
-                logger.warning(f"Vizit rasmlari supervisorga yuborishda xato: {e}")
+                logger.warning(f"Vizit media supervisorga yuborishda xato: {e}")
     else:  # boshqa
         card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id, lavozim)
         media_ref = sorov_data.get("media_ref")
@@ -277,11 +284,20 @@ async def _post_to_group(context, sorov_id: int, sorov_data: dict,
                                            parse_mode="MarkdownV2", disable_web_page_preview=True)
     elif tur == "vizit":
         caption = _card_vizit(ism, sorov_data.get("izoh", "—"), sorov_id, lavozim)
-        foto_ids = sorov_data.get("fotolar", [])
-        if foto_ids:
-            media = [InputMediaPhoto(fid) for fid in foto_ids[:-1]]
-            media.append(InputMediaPhoto(foto_ids[-1], caption=caption, parse_mode="MarkdownV2"))
-            await context.bot.send_media_group(chat_id=group_chat_id, media=media)
+        foto_ids  = sorov_data.get("fotolar", [])
+        video_ids = sorov_data.get("videolar", [])
+        all_media = (
+            [InputMediaPhoto(fid) for fid in foto_ids] +
+            [InputMediaVideo(fid) for fid in video_ids]
+        )
+        if all_media:
+            all_media[0] = type(all_media[0])(
+                media=all_media[0].media, caption=caption, parse_mode="MarkdownV2"
+            )
+            for chunk_start in range(0, len(all_media), 10):
+                await context.bot.send_media_group(
+                    chat_id=group_chat_id, media=all_media[chunk_start:chunk_start + 10]
+                )
         else:
             await context.bot.send_message(
                 chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2",
@@ -332,10 +348,15 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int):
     elif tur == "vizit":
         caption = _card_vizit(ism, izoh, sorov_id, lavozim)
         foto_ids = json.loads(sorov[8]) if sorov[8] else []
-        if foto_ids:
-            media = [InputMediaPhoto(fid) for fid in foto_ids[:-1]]
-            media.append(InputMediaPhoto(foto_ids[-1], caption=caption, parse_mode="MarkdownV2"))
-            await context.bot.send_media_group(chat_id=group_chat_id, media=media)
+        all_media = [InputMediaPhoto(fid) for fid in foto_ids]
+        if all_media:
+            all_media[0] = InputMediaPhoto(
+                media=all_media[0].media, caption=caption, parse_mode="MarkdownV2"
+            )
+            for chunk_start in range(0, len(all_media), 10):
+                await context.bot.send_media_group(
+                    chat_id=group_chat_id, media=all_media[chunk_start:chunk_start + 10]
+                )
         else:
             await context.bot.send_message(
                 chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2",
@@ -779,12 +800,21 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
     card = "\n".join(card_lines)
 
     async def _send_photos_and_media(chat_id: int) -> None:
-        if photos:
-            from telegram import InputMediaPhoto as _IMP
-            try:
-                await context.bot.send_media_group(chat_id=chat_id, media=[_IMP(fid) for fid in photos])
-            except Exception as e:
-                logger.warning(f"Media group yuborishda xato: {e}")
+        # Barcha foto + video → bitta media group
+        media_group = (
+            [InputMediaPhoto(fid) for fid in photos] +
+            [InputMediaVideo(fid) for fid in videos]
+        )
+        if media_group:
+            for chunk_start in range(0, len(media_group), 10):
+                try:
+                    await context.bot.send_media_group(
+                        chat_id=chat_id,
+                        media=media_group[chunk_start:chunk_start + 10],
+                    )
+                except Exception as e:
+                    logger.warning(f"Media group yuborishda xato: {e}")
+        # Fayllar va ovozlar alohida
         for f_info in files:
             fid = f_info["file_id"] if isinstance(f_info, dict) else f_info
             try:
@@ -796,11 +826,6 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
                 await context.bot.send_voice(chat_id=chat_id, voice=fid)
             except Exception as e:
                 logger.warning(f"Ovoz yuborishda xato: {e}")
-        for fid in videos:
-            try:
-                await context.bot.send_video(chat_id=chat_id, video=fid)
-            except Exception as e:
-                logger.warning(f"Video yuborishda xato: {e}")
 
     sent_ok = False
     try:
