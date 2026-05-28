@@ -81,6 +81,7 @@ from handlers import (
     klient_reject_reason,
     admin_tarix, tarix_filter_callback,
     topic_closed_handler,
+    admin_download_db,
 )
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
@@ -269,6 +270,8 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
+    app.add_handler(MessageHandler(filters.Regex(r"^🗄 Bazani yuklab olish$"),   admin_download_db))
+    app.add_handler(CommandHandler("download_db", admin_download_db))
     app.add_handler(MessageHandler(filters.Regex(r"^🏪 Klientlar$"),              admin_klientlar))
     app.add_handler(MessageReactionHandler(reaction_handler))
 
