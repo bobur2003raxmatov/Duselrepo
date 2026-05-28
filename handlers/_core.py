@@ -305,6 +305,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Assalomu Alaykum! Dusel Company botiga xush kelibsiz! 👋\n\n"
         "Iltimos, *Ism va Familiyangizni* kiriting:",
         parse_mode="Markdown",
+        reply_markup=remove_kb(),
     )
     return ISM
 
