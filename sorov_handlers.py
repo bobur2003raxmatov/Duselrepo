@@ -615,8 +615,6 @@ async def sorov_tel_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════
 
 async def sorov_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if _rate_limited(update.effective_user.id):
-        return SOROV_FOTO
     if not update.message.photo:
         await update.message.reply_text("❌ Iltimos, rasm yuboring.")
         return SOROV_FOTO
@@ -632,12 +630,17 @@ async def sorov_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SOROV_FOTO
 
-    await update.message.reply_text(
-        f"✅ {count} ta rasm qabul qilindi!\n\n"
-        "📝 *Muammo haqida batafsil izoh yozing:*",
-        parse_mode="Markdown",
-    )
-    return SOROV_IZOH
+    # Exactly at 3 → prompt for description. Extra photos (media group) silently accepted.
+    if count == 3:
+        await update.message.reply_text(
+            f"✅ {count} ta rasm qabul qilindi!\n\n"
+            "📝 *Muammo haqida batafsil izoh yozing:*",
+            parse_mode="Markdown",
+        )
+        return SOROV_IZOH
+
+    # count > 3: extra photo from media group, just store silently
+    return SOROV_FOTO
 
 
 # ══════════════════════════════════════════════
