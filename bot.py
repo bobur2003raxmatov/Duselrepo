@@ -319,8 +319,9 @@ async def post_init(app: Application):
     # Admin ham /new_client ko'radi
     await app.bot.set_my_commands(
         [
-            BotCommand("start",      "Botni qayta ishga tushirish"),
-            BotCommand("new_client", "Yangi klient registratsiyasi"),
+            BotCommand("start",       "Botni qayta ishga tushirish"),
+            BotCommand("new_client",  "Yangi klient registratsiyasi"),
+            BotCommand("download_db", "SQLite bazani yuklab olish"),
         ],
         scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
     )
