@@ -612,11 +612,12 @@ async def get_pending_sorovlar_count() -> int:
 
 
 async def get_pending_sorovlar_by_supervisor() -> dict[int, int]:
-    """Returns {supervisor_id: count} for all pending_supervisor sorovlar."""
+    """Returns {supervisor_id: count} for pending_supervisor sorovlar, excluding admins."""
     async with get_db() as db:
         async with db.execute(
             "SELECT supervisor_id, COUNT(*) FROM sorovlar "
             "WHERE status='pending_supervisor' AND supervisor_id IS NOT NULL "
+            "AND supervisor_id NOT IN (SELECT user_id FROM admins) "
             "GROUP BY supervisor_id"
         ) as cur:
             rows = await cur.fetchall()
