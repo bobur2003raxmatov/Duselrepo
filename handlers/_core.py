@@ -275,17 +275,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
 
         if status == "approved":
-            topic_ok = await is_topic_valid(context, topic_id)
-            if not topic_ok:
-                await db.delete_xodim(uid)
-                await update.message.reply_text(
-                    "⚠️ Sizga tegishli guruhdagi mavzu (Topic) o'chirilgan.\n"
-                    "Iltimos, qaytadan ro'yxatdan o'ting:\n\n"
-                    "*Ism va Familiyangizni* kiriting:",
-                    parse_mode="Markdown",
-                    reply_markup=remove_kb(),
-                )
-                return ISM
             kb = _role_keyboard(lavozim)
             await update.message.reply_text(
                 f"✅ Tizim faol, {em(ism)}!\n"
