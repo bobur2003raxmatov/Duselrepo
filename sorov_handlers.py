@@ -18,14 +18,14 @@ import database as db
 from config import (
     ADMIN_ID, GROUP_CHAT_ID,
     SOROV_TUR, SOROV_DOKON, SOROV_LOK, SOROV_TEL,
-    SOROV_FOTO, SOROV_IZOH,
+    SOROV_FOTO, SOROV_IZOH, SOROV_CONFIRM,
     SOROV_BATCH_COLLECT, SOROV_BATCH_PREVIEW,
     LIMIT_DOKON, LIMIT_SUMMA,
     INSTRUKSIYA_VIDEO_ID, BATCH_TIMEOUT_SEC,
 )
 from keyboards import (
     remove_kb, agent_kb, supervisor_kb, filial_rahbari_kb,
-    sorov_tur_kb, sorov_tasdiqlash_kb,
+    sorov_tur_kb, sorov_tasdiqlash_kb, sorov_agent_confirm_kb,
     batch_collect_kb, batch_preview_kb,
     sorov_action_inline,
 )
@@ -568,8 +568,7 @@ async def sorov_lok_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loc = update.message.location
     context.user_data["sorov_data"]["lat"] = loc.latitude
     context.user_data["sorov_data"]["lon"] = loc.longitude
-    await _finish_sorov(update, context)
-    return ConversationHandler.END
+    return await _show_agent_preview(update, context)
 
 
 # ══════════════════════════════════════════════
@@ -606,8 +605,7 @@ async def sorov_tel_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SOROV_TEL
     context.user_data["sorov_data"]["yangi_qiymat"] = phone
-    await _finish_sorov(update, context)
-    return ConversationHandler.END
+    return await _show_agent_preview(update, context)
 
 
 # ══════════════════════════════════════════════
@@ -649,8 +647,7 @@ async def sorov_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sorov_izoh_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["sorov_data"]["izoh"] = update.message.text.strip()
-    await _finish_sorov(update, context)
-    return ConversationHandler.END
+    return await _show_agent_preview(update, context)
 
 
 # ══════════════════════════════════════════════
@@ -686,20 +683,26 @@ async def _batch_auto_submit_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     lavozim = sorov_data.get("lavozim", "Agent")
-    success = await _do_submit_batch(uid, user_data, context)
+    sorov_id = await _do_submit_batch(uid, user_data, context)
 
     try:
-        msg_text = (
-            "⏱ *3 daqiqa o'tdi\\.* Muammoyingiz avtomatik yuborildi\\!"
-            if success else
-            "⚠️ Avtomatik yuborishda xato\\. Admin bilan bog'laning\\."
-        )
-        await context.bot.send_message(
-            chat_id=uid,
-            text=msg_text,
-            parse_mode="MarkdownV2",
-            reply_markup=_role_kb(lavozim),
-        )
+        if sorov_id:
+            sent = await context.bot.send_message(
+                chat_id=uid,
+                text=(
+                    f"⏱ *3 daqiqa o'tdi\\.* \\#{sorov_id}\\-so'rovingiz avtomatik yuborildi\\!"
+                ),
+                parse_mode="MarkdownV2",
+                reply_markup=_role_kb(lavozim),
+            )
+            await db.update_sorov_agent_msg_id(sorov_id, sent.message_id)
+        else:
+            await context.bot.send_message(
+                chat_id=uid,
+                text="⚠️ Avtomatik yuborishda xato\\. Admin bilan bog'laning\\.",
+                parse_mode="MarkdownV2",
+                reply_markup=_role_kb(lavozim),
+            )
     except Exception as e:
         logger.warning(f"Auto-submit bildirishnomasi yuborishda xato: {e}")
 
@@ -822,12 +825,19 @@ async def batch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if action == "batch_confirm":
         await query.edit_message_text("⏳ Yuborilmoqda\\.\\.\\.", parse_mode="MarkdownV2")
-        success = await _do_submit_batch(uid, context.user_data, context)
+        sorov_id = await _do_submit_batch(uid, context.user_data, context)
         _cancel_batch_timer(context, uid)
         context.user_data.pop("batch", None)
         context.user_data.pop("sorov_data", None)
-        reply_text = "✅ Muammoyingiz yuborildi\\!" if success else "❌ Guruh belgilanmagan\\. Admin bilan bog'laning\\."
-        await query.edit_message_text(reply_text, parse_mode="MarkdownV2")
+        if sorov_id:
+            reply_text = f"✅ *\\#{sorov_id}\\-so'rovingiz* qabul qilindi\\! ⏳ _Supervisor tasdig'ini kutmoqda\\._"
+            await query.edit_message_text(reply_text, parse_mode="MarkdownV2")
+            try:
+                await db.update_sorov_agent_msg_id(sorov_id, query.message.message_id)
+            except Exception:
+                pass
+        else:
+            await query.edit_message_text("❌ Guruh belgilanmagan\\. Admin bilan bog'laning\\.", parse_mode="MarkdownV2")
         try:
             await context.bot.send_message(chat_id=uid, text=".", reply_markup=_role_kb(lavozim))
         except Exception:
@@ -981,7 +991,106 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
     except Exception as _e:
         logger.warning(f"Audit log yozishda xato (batch): {_e}")
 
-    return sent_ok
+    return sorov_id if sent_ok else None
+
+
+# ══════════════════════════════════════════════
+# PREVIEW  — agent confirms before sending
+# ══════════════════════════════════════════════
+
+async def _show_agent_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show agent a preview of their sorov data and ask for confirmation."""
+    uid = update.effective_user.id
+    data = context.user_data.get("sorov_data", {})
+    tur = data.get("tur", "")
+    ism = data.get("agent_ism", "")
+    dokon = _dokon_display(data.get("dokon_nomi", "") or "")
+
+    if tur == "lokatsiya":
+        lat = data.get("lat")
+        lon = data.get("lon")
+        coords = f"`{lon:.6f}; {lat:.6f}`" if (lat is not None and lon is not None) else "—"
+        caption = (
+            f"📍 *Lokatsiya o'zgartirish — tasdiqlash*\n\n"
+            f"👤 Agent: {em(ism)}\n"
+            f"🏪 Do'kon: {em(dokon)}\n"
+            f"📌 {coords}\n\n"
+            "_Yuqoridagi ma'lumotlar to'g'rimi?_"
+        )
+        await update.message.reply_text(caption, parse_mode="MarkdownV2", reply_markup=sorov_agent_confirm_kb())
+        if lat is not None and lon is not None:
+            await context.bot.send_location(chat_id=uid, latitude=lat, longitude=lon)
+
+    elif tur == "telefon":
+        phone = em(data.get("yangi_qiymat", "—"))
+        caption = (
+            f"📞 *Telefon o'zgartirish — tasdiqlash*\n\n"
+            f"👤 Agent: {em(ism)}\n"
+            f"🏪 Do'kon: {em(dokon)}\n"
+            f"📱 Yangi raqam: {phone}\n\n"
+            "_Yuqoridagi ma'lumotlar to'g'rimi?_"
+        )
+        await update.message.reply_text(caption, parse_mode="MarkdownV2", reply_markup=sorov_agent_confirm_kb())
+
+    elif tur == "vizit":
+        fotolar = data.get("fotolar", [])
+        izoh = data.get("izoh", "—")
+        caption = (
+            f"🖼 *Vizit muammosi — tasdiqlash*\n\n"
+            f"👤 Agent: {em(ism)}\n"
+            f"📝 Izoh: {em(izoh)}\n\n"
+            "_Yuqoridagi ma'lumotlar to'g'rimi?_"
+        )
+        if len(fotolar) >= 2:
+            media = [InputMediaPhoto(fid) for fid in fotolar[:10]]
+            media[0] = InputMediaPhoto(fotolar[0], caption=caption, parse_mode="MarkdownV2")
+            await context.bot.send_media_group(chat_id=uid, media=media)
+            await context.bot.send_message(
+                chat_id=uid,
+                text="✅ Yuqoridagi rasmlar va ma'lumotlar to'g'rimi?",
+                reply_markup=sorov_agent_confirm_kb(),
+            )
+        elif len(fotolar) == 1:
+            await context.bot.send_photo(chat_id=uid, photo=fotolar[0], caption=caption,
+                                          parse_mode="MarkdownV2")
+            await context.bot.send_message(
+                chat_id=uid,
+                text="✅ Yuqoridagi rasm va ma'lumotlar to'g'rimi?",
+                reply_markup=sorov_agent_confirm_kb(),
+            )
+        else:
+            await update.message.reply_text(caption, parse_mode="MarkdownV2",
+                                             reply_markup=sorov_agent_confirm_kb())
+
+    else:  # boshqa — handled by batch flow, shouldn't reach here
+        await _finish_sorov(update, context)
+        return ConversationHandler.END
+
+    return SOROV_CONFIRM
+
+
+async def sorov_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Agent taps ✅ Tasdiqlash or ❌ Bekor qilish on preview."""
+    query = update.callback_query
+    await query.answer()
+    uid = update.effective_user.id
+    action = query.data  # sorov_confirm_ok | sorov_confirm_cancel
+
+    # Remove confirm buttons regardless
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    if action == "sorov_confirm_cancel":
+        context.user_data.pop("sorov_data", None)
+        lavozim = (await db.get_xodim(uid) or [None, None, None, "Agent"])[3]
+        await query.message.reply_text("❌ So'rov bekor qilindi.", reply_markup=_role_kb(lavozim))
+        return ConversationHandler.END
+
+    # OK — submit
+    await _finish_sorov(update, context)
+    return ConversationHandler.END
 
 
 # ══════════════════════════════════════════════
@@ -1056,7 +1165,19 @@ async def _finish_sorov(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent_ok = True
 
     if sent_ok:
-        await update.message.reply_text("✅ So'rovingiz yuborildi.", reply_markup=_role_kb(lavozim))
+        try:
+            sent_msg = await context.bot.send_message(
+                chat_id=uid,
+                text=(
+                    f"✅ *\\#{sorov_id}\\-so'rovingiz qabul qilindi\\!*\n"
+                    f"⏳ _Supervisor tasdig'ini kutmoqda\\._"
+                ),
+                parse_mode="MarkdownV2",
+                reply_markup=_role_kb(lavozim),
+            )
+            await db.update_sorov_agent_msg_id(sorov_id, sent_msg.message_id)
+        except Exception as _e:
+            logger.warning(f"Agent confirm msg yuborishda xato: {_e}")
     else:
         await update.message.reply_text(
             "❌ Guruh belgilanmagan. Admin bilan bog'laning.",
@@ -1094,6 +1215,8 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     sup_row = await db.get_xodim(sup_uid)
     sup_role = _lavozim_to_role(sup_row[3]) if sup_row else "supervisor"
 
+    agent_msg_id = sorov[16] if len(sorov) > 16 else None
+
     if action == "sorov_done":
         await db.update_sorov_status(sorov_id, "done")
         try:
@@ -1107,8 +1230,9 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             await context.bot.send_message(
                 chat_id=agent_id,
-                text=f"✅ \\#{sorov_id}\\-so'rovingiz bajarildi\\!",
+                text=f"✅ Sizning *\\#{sorov_id}\\-so'rovingiz* bajarildi\\!",
                 parse_mode="MarkdownV2",
+                reply_to_message_id=agent_msg_id,
             )
         except Exception:
             pass
@@ -1127,8 +1251,9 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             await context.bot.send_message(
                 chat_id=agent_id,
-                text=f"❌ \\#{sorov_id}\\-so'rovingiz rad etildi\\.",
+                text=f"❌ Sizning *\\#{sorov_id}\\-so'rovingiz* rad etildi\\.",
                 parse_mode="MarkdownV2",
+                reply_to_message_id=agent_msg_id,
             )
         except Exception:
             pass
@@ -1198,11 +1323,16 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
 
         elapsed = _elapsed(sana)
+        agent_msg_id = sorov[16] if len(sorov) > 16 else None
         try:
             await context.bot.send_message(
                 chat_id=agent_id,
-                text=f"✅ So'rovingiz tasdiqlandi\\.\n⏱ Vaqt: {elapsed}",
+                text=(
+                    f"✅ Sizning *\\#{sorov_id}\\-raqamli so'rovingiz* "
+                    f"supervisor tomonidan tasdiqlandi\\!\n⏱ Vaqt: {elapsed}"
+                ),
                 parse_mode="MarkdownV2",
+                reply_to_message_id=agent_msg_id,
             )
         except Exception:
             pass
@@ -1226,13 +1356,18 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         await query.edit_message_text(f"❌ So'rov #{sorov_id} rad etildi.")
         elapsed = _elapsed(sana)
+        agent_msg_id = sorov[16] if len(sorov) > 16 else None
         try:
             await context.bot.send_message(
                 chat_id=agent_id,
-                text=f"❌ So'rovingiz rad etildi\\.\n"
-                     f"🏪 Dokon: {em(dokon)}\n"
-                     f"⏱ Vaqt: {elapsed}",
+                text=(
+                    f"❌ Sizning *\\#{sorov_id}\\-raqamli so'rovingiz* "
+                    f"supervisor tomonidan rad etildi\\.\n"
+                    f"🏪 Dokon: {em(dokon)}\n"
+                    f"⏱ Vaqt: {elapsed}"
+                ),
                 parse_mode="MarkdownV2",
+                reply_to_message_id=agent_msg_id,
             )
         except Exception:
             pass

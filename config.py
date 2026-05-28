@@ -172,6 +172,7 @@ SOROV_IZOH  = 45
 SOROV_MSG          = 46  # kept for compatibility (no longer used in conv handler)
 SOROV_BATCH_COLLECT = 49
 SOROV_BATCH_PREVIEW = 50
+SOROV_CONFIRM       = 51
 # Limit qo'shish (Filial Rahbari)
 LIMIT_DOKON = 47
 LIMIT_SUMMA = 48

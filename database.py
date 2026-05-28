@@ -207,6 +207,13 @@ async def init_db():
         except Exception:
             pass
 
+        # Migration: agent_msg_id — message ID of agent's confirmation preview
+        try:
+            await db.execute("ALTER TABLE sorovlar ADD COLUMN agent_msg_id INTEGER")
+            await db.commit()
+        except Exception:
+            pass
+
         # Supervisor → Telegram group mapping
         await db.execute("""
             CREATE TABLE IF NOT EXISTS supervisor_group (
@@ -1327,6 +1334,14 @@ async def update_sorov_status(sorov_id: int, status: str) -> None:
     async with get_db() as db:
         await db.execute(
             "UPDATE sorovlar SET status=? WHERE id=?", (status, sorov_id)
+        )
+        await db.commit()
+
+
+async def update_sorov_agent_msg_id(sorov_id: int, msg_id: int) -> None:
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE sorovlar SET agent_msg_id=? WHERE id=?", (msg_id, sorov_id)
         )
         await db.commit()
 

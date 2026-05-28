@@ -120,6 +120,13 @@ def sorov_tur_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def sorov_agent_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Tasdiqlash", callback_data="sorov_confirm_ok"),
+        InlineKeyboardButton("❌ Bekor qilish", callback_data="sorov_confirm_cancel"),
+    ]])
+
+
 def sorov_tasdiqlash_kb(sorov_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"sorov_appr_{sorov_id}"),
