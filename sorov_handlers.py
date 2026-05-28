@@ -339,12 +339,52 @@ async def _post_to_group(context, sorov_id: int, sorov_data: dict,
                 )
         else:  # boshqa
             card = _card_boshqa(ism, sorov_data.get("izoh", ""), sorov_id, lavozim)
-            await context.bot.send_message(
-                chat_id=group_chat_id, text=card, parse_mode="MarkdownV2", **thread
+            b_photos = sorov_data.get("fotolar", [])
+            b_videos = sorov_data.get("videolar", [])
+            b_files  = sorov_data.get("fayllar", [])
+            b_voices = sorov_data.get("ovozlar", [])
+            all_media_b = (
+                [InputMediaPhoto(fid) for fid in b_photos] +
+                [InputMediaVideo(fid) for fid in b_videos]
             )
-            media_ref = sorov_data.get("media_ref") or sorov_data.get("yangi_qiymat")
-            if media_ref:
-                await _send_media(context, group_chat_id, media_ref)
+            if len(all_media_b) == 1:
+                if b_photos:
+                    await context.bot.send_photo(
+                        chat_id=group_chat_id, photo=b_photos[0],
+                        caption=card, parse_mode="MarkdownV2", **thread
+                    )
+                else:
+                    await context.bot.send_video(
+                        chat_id=group_chat_id, video=b_videos[0],
+                        caption=card, parse_mode="MarkdownV2", **thread
+                    )
+            elif all_media_b:
+                all_media_b[0] = (
+                    InputMediaPhoto(all_media_b[0].media, caption=card, parse_mode="MarkdownV2")
+                    if isinstance(all_media_b[0], InputMediaPhoto)
+                    else InputMediaVideo(all_media_b[0].media, caption=card, parse_mode="MarkdownV2")
+                )
+                for chunk_start in range(0, len(all_media_b), 10):
+                    await context.bot.send_media_group(
+                        chat_id=group_chat_id,
+                        media=all_media_b[chunk_start:chunk_start + 10],
+                        **thread,
+                    )
+            else:
+                await context.bot.send_message(
+                    chat_id=group_chat_id, text=card, parse_mode="MarkdownV2", **thread
+                )
+            for f_info in b_files:
+                fid = f_info["file_id"] if isinstance(f_info, dict) else f_info
+                try:
+                    await context.bot.send_document(chat_id=group_chat_id, document=fid, **thread)
+                except Exception:
+                    pass
+            for fid in b_voices:
+                try:
+                    await context.bot.send_voice(chat_id=group_chat_id, voice=fid, **thread)
+                except Exception:
+                    pass
 
     thread = {"message_thread_id": topic_id} if topic_id else {}
     try:
@@ -427,11 +467,58 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int, topi
                 )
         else:  # boshqa / limit
             card = _build_card(sorov, lavozim)
-            await context.bot.send_message(
-                chat_id=group_chat_id, text=card, parse_mode="MarkdownV2", **thread
-            )
-            if tur == "boshqa" and qiymat and ":" in qiymat:
-                await _send_media(context, group_chat_id, qiymat)
+            if tur == "boshqa":
+                foto_ids_b = json.loads(sorov[8]) if sorov[8] else []
+                extra = json.loads(qiymat) if (qiymat and qiymat.startswith("{")) else {}
+                video_ids_b = extra.get("videos", [])
+                files_b   = extra.get("files", [])
+                voices_b  = extra.get("voices", [])
+                all_media_b = (
+                    [InputMediaPhoto(fid) for fid in foto_ids_b] +
+                    [InputMediaVideo(fid) for fid in video_ids_b]
+                )
+                if len(all_media_b) == 1:
+                    if foto_ids_b:
+                        await context.bot.send_photo(
+                            chat_id=group_chat_id, photo=foto_ids_b[0],
+                            caption=card, parse_mode="MarkdownV2", **thread
+                        )
+                    else:
+                        await context.bot.send_video(
+                            chat_id=group_chat_id, video=video_ids_b[0],
+                            caption=card, parse_mode="MarkdownV2", **thread
+                        )
+                elif all_media_b:
+                    all_media_b[0] = (
+                        InputMediaPhoto(all_media_b[0].media, caption=card, parse_mode="MarkdownV2")
+                        if isinstance(all_media_b[0], InputMediaPhoto)
+                        else InputMediaVideo(all_media_b[0].media, caption=card, parse_mode="MarkdownV2")
+                    )
+                    for chunk_start in range(0, len(all_media_b), 10):
+                        await context.bot.send_media_group(
+                            chat_id=group_chat_id,
+                            media=all_media_b[chunk_start:chunk_start + 10],
+                            **thread,
+                        )
+                else:
+                    await context.bot.send_message(
+                        chat_id=group_chat_id, text=card, parse_mode="MarkdownV2", **thread
+                    )
+                for f_info in files_b:
+                    fid = f_info["file_id"] if isinstance(f_info, dict) else f_info
+                    try:
+                        await context.bot.send_document(chat_id=group_chat_id, document=fid, **thread)
+                    except Exception:
+                        pass
+                for fid in voices_b:
+                    try:
+                        await context.bot.send_voice(chat_id=group_chat_id, voice=fid, **thread)
+                    except Exception:
+                        pass
+            else:
+                await context.bot.send_message(
+                    chat_id=group_chat_id, text=card, parse_mode="MarkdownV2", **thread
+                )
 
     thread = {"message_thread_id": topic_id} if topic_id else {}
     try:
