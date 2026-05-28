@@ -344,6 +344,7 @@ async def post_init(app: Application):
             BotCommand("new_client",  "Yangi klient registratsiyasi"),
             BotCommand("klientlar",   "Klientlar ro'yxati"),
             BotCommand("add_admin",   "Yangi admin qo'shish"),
+            BotCommand("instruksiya", "Lavozimlar uchun yo'riqnoma boshqaruvi"),
         ],
         scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
     )
