@@ -287,6 +287,9 @@ async def pending_sorovlar_alert_job(context: ContextTypes.DEFAULT_TYPE):
     if not sup_counts:
         return
     for sup_id, count in sup_counts.items():
+        # Triple guard: hardcoded ADMIN_ID, DB admin check, avoid self-notify
+        if sup_id == ADMIN_ID:
+            continue
         if await is_admin(sup_id):
             continue
         try:
