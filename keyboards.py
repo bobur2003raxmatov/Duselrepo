@@ -16,6 +16,13 @@ def instruksiya_lavozim_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def instruksiya_mavjud_kb(lavozim: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✏️ Tahrirlash", callback_data=f"instr_edit_{lavozim}"),
+        InlineKeyboardButton("🗑 O'chirish",  callback_data=f"instr_del_{lavozim}"),
+    ]])
+
+
 def lavozim_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [[lav] for lav in LAVOZIMLAR],

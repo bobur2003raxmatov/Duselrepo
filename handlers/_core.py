@@ -27,7 +27,7 @@ from keyboards import (
     klientlar_search_page_inline,
     mening_klientlar_kb,
     agent_kb, supervisor_kb, filial_rahbari_kb,
-    instruksiya_lavozim_kb,
+    instruksiya_lavozim_kb, instruksiya_mavjud_kb,
 )
 
 
@@ -1679,15 +1679,57 @@ async def admin_instruksiya_lavozim_cb(update: Update, context: ContextTypes.DEF
     row = await db.get_instruksiya(lavozim)
     if row and (row[0] or row[1]):
         matn, media_type, _ = row
-        mavjud_text = f"\n\n📄 *Joriy kontent:* {'📷 Rasm' if media_type=='photo' else '🎥 Video' if media_type=='video' else matn}"
-    else:
-        mavjud_text = ""
+        if media_type == "photo":
+            preview = "📷 Rasm"
+        elif media_type == "video":
+            preview = "🎥 Video"
+        else:
+            preview = f"📝 `{matn[:120]}{'...' if len(matn or '')>120 else ''}`"
+        await query.edit_message_text(
+            f"📋 *{lavozim}* — joriy instruksiya:\n\n{preview}",
+            parse_mode="Markdown",
+            reply_markup=instruksiya_mavjud_kb(lavozim),
+        )
+        return INSTR_MATN
+    # Mavjud emas — to'g'ridan yangi kontent so'raladi
     await query.edit_message_text(
-        f"✏️ *{lavozim}* uchun instruksiya yuboring:{mavjud_text}\n\n"
-        f"_Matn, rasm yoki video yuborishingiz mumkin._\n_Bekor qilish: /cancel_",
+        f"✏️ *{lavozim}* uchun instruksiya yuboring:\n\n"
+        "_Matn, rasm yoki video yuborishingiz mumkin._\n_Bekor qilish: /cancel_",
         parse_mode="Markdown",
     )
     return INSTR_MATN
+
+
+async def admin_instruksiya_edit_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lavozim = query.data[len("instr_edit_"):]
+    context.user_data["instr_lavozim"] = lavozim
+    row = await db.get_instruksiya(lavozim)
+    # Agar matn bo'lsa — ko'chirib olish uchun alohida yuboriladi
+    if row and row[0] and not row[1]:
+        await query.message.reply_text(row[0])
+    await query.edit_message_text(
+        f"✏️ *{lavozim}* uchun yangi instruksiya yuboring:\n\n"
+        "_Matn, rasm yoki video yuborishingiz mumkin._\n_Bekor qilish: /cancel_",
+        parse_mode="Markdown",
+    )
+    return INSTR_MATN
+
+
+async def admin_instruksiya_del_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lavozim = query.data[len("instr_del_"):]
+    context.user_data.pop("instr_lavozim", None)
+    async with __import__("database").get_db() as conn:
+        await conn.execute("DELETE FROM instruksiyalar WHERE lavozim=?", (lavozim,))
+        await conn.commit()
+    await query.edit_message_text(
+        f"🗑 *{lavozim}* instruksiyasi o'chirildi.",
+        parse_mode="Markdown",
+    )
+    return ConversationHandler.END
 
 
 async def admin_instruksiya_matn_save(update: Update, context: ContextTypes.DEFAULT_TYPE):

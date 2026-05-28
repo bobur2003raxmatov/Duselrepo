@@ -95,6 +95,8 @@ from handlers import (
     add_admin_command,
     instruksiya_cmd,
     admin_instruksiya_lavozim_cb,
+    admin_instruksiya_edit_cb,
+    admin_instruksiya_del_cb,
     admin_instruksiya_matn_save,
 )
 print("handlers imported OK", flush=True)
@@ -278,6 +280,8 @@ def build_application() -> Application:
         states={
             INSTR_MATN: [
                 CallbackQueryHandler(admin_instruksiya_lavozim_cb, pattern=r"^instr_lav_"),
+                CallbackQueryHandler(admin_instruksiya_edit_cb,    pattern=r"^instr_edit_"),
+                CallbackQueryHandler(admin_instruksiya_del_cb,     pattern=r"^instr_del_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_instruksiya_matn_save),
                 MessageHandler(filters.PHOTO, admin_instruksiya_matn_save),
                 MessageHandler(filters.VIDEO, admin_instruksiya_matn_save),

@@ -69,5 +69,7 @@ from handlers._core import (
     # Instruksiya
     instruksiya_cmd,
     admin_instruksiya_lavozim_cb,
+    admin_instruksiya_edit_cb,
+    admin_instruksiya_del_cb,
     admin_instruksiya_matn_save,
 )
