@@ -1,83 +1,13 @@
-import os
-import asyncio
 import aiosqlite
 from contextlib import asynccontextmanager
 from datetime import datetime
 from config import DB_PATH, GROUP_TIMEOUT_SEC, ADMIN_ID
 
-_TURSO_URL   = os.environ.get("TURSO_URL", "")
-_TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "")
-_turso_conn  = None   # persistent Turso connection (reused)
-
-
-class _TursoCursor:
-    """Aiosqlite cursor interface over a libsql ResultSet."""
-    def __init__(self, rows, last_rowid=None):
-        self._rows = [tuple(r) for r in rows] if rows else []
-        self.lastrowid = last_rowid
-
-    async def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-    async def fetchall(self):
-        return list(self._rows)
-
-
-class _TursoExecCtx:
-    """Awaitable + async context manager — matches aiosqlite's execute() return.
-    libsql-experimental is sync — we run it in a thread to avoid blocking."""
-    def __init__(self, conn, sql, params):
-        self._conn   = conn
-        self._sql    = sql
-        self._params = list(params) if params else []
-
-    async def _run(self):
-        rs = await asyncio.to_thread(
-            self._conn.execute, self._sql, self._params
-        )
-        rows    = getattr(rs, "rows", []) or []
-        last_id = getattr(rs, "last_insert_rowid", None)
-        return _TursoCursor(rows, last_id)
-
-    def __await__(self):
-        return self._run().__await__()
-
-    async def __aenter__(self):
-        self._cur = await self._run()
-        return self._cur
-
-    async def __aexit__(self, *args):
-        pass
-
-
-class _TursoConn:
-    """Thin wrapper making libsql look like aiosqlite connection."""
-    def __init__(self, conn):
-        self._c = conn
-
-    def execute(self, sql, params=None):
-        return _TursoExecCtx(self._c, sql, params or [])
-
-    async def executemany(self, sql, seq):
-        await asyncio.to_thread(
-            self._c.executemany, sql, [list(p) for p in seq]
-        )
-
-    async def commit(self):
-        await asyncio.to_thread(self._c.commit)
-
 
 @asynccontextmanager
 async def get_db():
-    global _turso_conn
-    if _TURSO_URL:
-        if _turso_conn is None:
-            import libsql_experimental as libsql
-            _turso_conn = libsql.connect(_TURSO_URL, auth_token=_TURSO_TOKEN)
-        yield _TursoConn(_turso_conn)
-    else:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            yield conn
+    async with aiosqlite.connect(DB_PATH) as conn:
+        yield conn
 
 
 async def init_db():

@@ -1617,6 +1617,46 @@ async def admin_download_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Xato: {e}")
 
 
+async def admin_upload_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin uchun: yuborilgan .db faylni joriy bazaga almashtiradi."""
+    uid = update.effective_user.id
+    if not await db.is_admin(uid):
+        return
+
+    msg = update.message
+    if not msg.document:
+        await msg.reply_text("❌ .db fayl yuboring.")
+        return
+
+    filename = msg.document.file_name or ""
+    if not filename.endswith(".db"):
+        await msg.reply_text("❌ Faqat .db fayl qabul qilinadi.")
+        return
+
+    db_path = os.path.abspath(os.environ.get("DB_PATH", "dusel_company.db"))
+    backup  = db_path + ".bak"
+
+    try:
+        # Oldingi bazani backup qilib saqlaymiz
+        if os.path.exists(db_path):
+            import shutil
+            shutil.copy2(db_path, backup)
+
+        # Yangi faylni yuklab olamiz
+        file = await msg.document.get_file()
+        await file.download_to_drive(db_path)
+
+        size_mb = os.path.getsize(db_path) / (1024 * 1024)
+        await msg.reply_text(
+            f"✅ Baza muvaffaqiyatli yangilandi: {size_mb:.2f} MB\n"
+            f"_Oldingi baza {os.path.basename(backup)} sifatida saqlab qolindi._",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"DB yuklashda xato: {e}")
+        await msg.reply_text(f"❌ Xato: {e}")
+
+
 # ══════════════════════════════════════════════
 # XODIMNI TAHRIRLASH OQIMI (ADMIN)
 # ══════════════════════════════════════════════

@@ -82,6 +82,7 @@ from handlers import (
     admin_tarix, tarix_filter_callback,
     topic_closed_handler,
     admin_download_db,
+    admin_upload_db,
 )
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
@@ -272,6 +273,12 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
     app.add_handler(MessageHandler(filters.Regex(r"^🗄 Bazani yuklab olish$"),   admin_download_db))
     app.add_handler(CommandHandler("download_db", admin_download_db))
+    app.add_handler(CommandHandler("upload_db",   admin_upload_db))
+    from config import ADMIN_ID
+    app.add_handler(MessageHandler(
+        filters.Document.FileExtension("db") & filters.Chat(ADMIN_ID),
+        admin_upload_db,
+    ))
     app.add_handler(MessageHandler(filters.Regex(r"^🏪 Klientlar$"),              admin_klientlar))
     app.add_handler(MessageReactionHandler(reaction_handler))
 
@@ -290,7 +297,6 @@ def build_application() -> Application:
 
     # Klient reject reason — group 1 so it does not steal updates from group 0
     # (admin_guruh_javob va xodim_chat_handler ishlashi uchun)
-    from config import ADMIN_ID
     app.add_handler(
         MessageHandler(
             filters.User(ADMIN_ID) & ~filters.Chat(GROUP_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
