@@ -862,12 +862,16 @@ async def batch_collect_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    batch = context.user_data.get("batch", {})
+    batch      = context.user_data.get("batch", {})
+    sorov_data = context.user_data.get("sorov_data", {})
     messages = batch.get("messages", [])
     photos   = batch.get("photos", [])
     files    = batch.get("files", [])
     voices   = batch.get("voices", [])
     videos   = batch.get("videos", [])
+    uid      = update.effective_user.id
+    ism      = sorov_data.get("agent_ism", "")
+    lavozim  = sorov_data.get("lavozim", "Agent")
 
     total = len(messages) + len(photos) + len(files) + len(voices) + len(videos)
     if total == 0:
@@ -878,26 +882,82 @@ async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return SOROV_BATCH_COLLECT
 
-    text = "📋 *Yuborish oldidan tekshiring:*\n\n"
-    if messages: text += f"💬 Xabarlar: *{len(messages)}* ta\n"
-    if photos:   text += f"🖼 Rasmlar: *{len(photos)}* ta\n"
-    if files:    text += f"📎 Fayllar: *{len(files)}* ta\n"
-    if voices:   text += f"🎙 Ovozli: *{len(voices)}* ta\n"
-    if videos:   text += f"🎥 Video: *{len(videos)}* ta\n"
-
+    # Build preview caption (same as what supervisor will receive, #??? placeholder)
+    now_str = datetime.now().strftime("%d\\.%m\\.%Y %H:%M")
+    role_label = em(lavozim)
+    caption_lines = [
+        f"💬 *Boshqa muammo — tasdiqlash*",
+        f"👤 {role_label}: {em(ism)}",
+        f"🕐 {now_str}",
+    ]
     if messages:
-        text += "\n"
+        caption_lines.append("\n📝 *Xabarlar:*")
         for m in messages[:3]:
-            short = m[:150] + ("..." if len(m) > 150 else "")
-            text += f"\n💬 _{em(short)}_"
+            caption_lines.append(em(m[:400]))
         if len(messages) > 3:
-            text += f"\n_\\.\\.\\. va yana {len(messages) - 3} ta xabar_"
+            caption_lines.append(f"_\\.\\.\\. yana {len(messages) - 3} ta xabar_")
+    caption_lines.append(f"\n_Yuqoridagi ma'lumotlar to'g'rimi?_")
+    caption = "\n".join(caption_lines)
 
-    await update.message.reply_text(
-        text,
-        parse_mode="MarkdownV2",
-        reply_markup=batch_preview_kb(),
+    media_group = (
+        [InputMediaPhoto(fid) for fid in photos] +
+        [InputMediaVideo(fid) for fid in videos]
     )
+
+    if len(media_group) == 1:
+        if photos:
+            await context.bot.send_photo(
+                chat_id=uid, photo=photos[0],
+                caption=caption, parse_mode="MarkdownV2",
+            )
+        else:
+            await context.bot.send_video(
+                chat_id=uid, video=videos[0],
+                caption=caption, parse_mode="MarkdownV2",
+            )
+        await context.bot.send_message(
+            chat_id=uid,
+            text="✅ Yuqoridagilar to'g'rimi?",
+            reply_markup=batch_preview_kb(),
+        )
+    elif media_group:
+        media_group[0] = (
+            InputMediaPhoto(media_group[0].media, caption=caption, parse_mode="MarkdownV2")
+            if isinstance(media_group[0], InputMediaPhoto)
+            else InputMediaVideo(media_group[0].media, caption=caption, parse_mode="MarkdownV2")
+        )
+        for chunk_start in range(0, len(media_group), 10):
+            await context.bot.send_media_group(
+                chat_id=uid,
+                media=media_group[chunk_start:chunk_start + 10],
+            )
+        await context.bot.send_message(
+            chat_id=uid,
+            text="✅ Yuqoridagilar to'g'rimi?",
+            reply_markup=batch_preview_kb(),
+        )
+    else:
+        # Faqat matn / fayl / ovoz
+        await context.bot.send_message(
+            chat_id=uid,
+            text=caption,
+            parse_mode="MarkdownV2",
+            reply_markup=batch_preview_kb(),
+        )
+
+    # Fayllar va ovozlarni ham ko'rsatish (preview uchun)
+    for f_info in files:
+        fid = f_info["file_id"] if isinstance(f_info, dict) else f_info
+        try:
+            await context.bot.send_document(chat_id=uid, document=fid)
+        except Exception:
+            pass
+    for fid in voices:
+        try:
+            await context.bot.send_voice(chat_id=uid, voice=fid)
+        except Exception:
+            pass
+
     return SOROV_BATCH_PREVIEW
 
 
