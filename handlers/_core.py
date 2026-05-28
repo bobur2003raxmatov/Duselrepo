@@ -1621,7 +1621,7 @@ async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args or not args[0].lstrip("-").isdigit():
         await update.message.reply_text(
-            "➕ *Admin qo'shish*\n\nFoydalanish: `/add_admin <user_id>`\n\nMisol: `/add_admin 123456789`",
+            "➕ *Admin qo'shish*\n\nFoydalanish: `/add_admin <user_id>`\n\nMisol: `/add_admin 123456789`\n\n💡 User ID ni bilish uchun @userinfobot ga `/start` yuboring.",
             parse_mode="Markdown",
         )
         return
