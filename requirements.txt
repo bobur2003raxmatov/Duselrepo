@@ -1,3 +1,4 @@
 python-telegram-bot[job-queue,webhooks]==21.3
 aiosqlite==0.19.0
 openpyxl==3.1.2
+libsql-experimental==0.0.27

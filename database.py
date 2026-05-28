@@ -1,20 +1,81 @@
+import os
 import aiosqlite
 from contextlib import asynccontextmanager
 from datetime import datetime
 from config import DB_PATH, GROUP_TIMEOUT_SEC, ADMIN_ID
 
-# ── Ulanish yordamchisi ──────────────────────────────────────────
-# Hozir har so'rovda yangi SQLite ulanish ochiladi va yopiladi.
-# Bu kichik Telegram botlar uchun yetarli. Kelajakda PostgreSQL ga
-# o'tganda shu get_db() ni connection pool bilan almashtirish kifoya.
+_TURSO_URL   = os.environ.get("TURSO_URL", "")
+_TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "")
+_turso_conn  = None   # persistent Turso connection (reused)
+
+
+class _TursoCursor:
+    """Aiosqlite cursor interface over a libsql ResultSet."""
+    def __init__(self, rows, last_rowid=None):
+        self._rows = [tuple(r) for r in rows] if rows else []
+        self.lastrowid = last_rowid
+
+    async def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    async def fetchall(self):
+        return list(self._rows)
+
+
+class _TursoExecCtx:
+    """Awaitable + async context manager — matches aiosqlite's execute() return."""
+    def __init__(self, conn, sql, params):
+        self._conn   = conn
+        self._sql    = sql
+        self._params = list(params) if params else []
+
+    async def _run(self):
+        rs = await self._conn.execute(self._sql, self._params)
+        rows    = getattr(rs, "rows", []) or []
+        last_id = getattr(rs, "last_insert_rowid", None)
+        return _TursoCursor(rows, last_id)
+
+    def __await__(self):
+        return self._run().__await__()
+
+    async def __aenter__(self):
+        self._cur = await self._run()
+        return self._cur
+
+    async def __aexit__(self, *args):
+        pass
+
+
+class _TursoConn:
+    """Thin wrapper making libsql look like aiosqlite connection."""
+    def __init__(self, conn):
+        self._c = conn
+
+    def execute(self, sql, params=None):
+        return _TursoExecCtx(self._c, sql, params or [])
+
+    async def executemany(self, sql, seq):
+        await self._c.executemany(sql, [list(p) for p in seq])
+
+    async def commit(self):
+        await self._c.commit()
+
+
 @asynccontextmanager
 async def get_db():
-    async with aiosqlite.connect(DB_PATH) as conn:
-        yield conn
+    global _turso_conn
+    if _TURSO_URL:
+        if _turso_conn is None:
+            import libsql_experimental as libsql
+            _turso_conn = await libsql.connect(_TURSO_URL, auth_token=_TURSO_TOKEN)
+        yield _TursoConn(_turso_conn)
+    else:
+        async with get_db() as conn:
+            yield conn
 
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS xodimlar (
                 user_id      INTEGER PRIMARY KEY,
@@ -314,14 +375,14 @@ async def init_db():
 
 # ── DB versiyasi ─────────────────────────────────────────────────
 async def get_db_version() -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("SELECT version FROM db_version LIMIT 1") as cur:
             row = await cur.fetchone()
     return row[0] if row else 0
 
 
 async def set_db_version(version: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM db_version")
         await db.execute("INSERT INTO db_version VALUES (?)", (version,))
         await db.commit()
@@ -332,7 +393,7 @@ _admin_cache: set[int] = set()
 
 
 async def _reload_admin_cache() -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("SELECT user_id FROM admins") as cur:
             rows = await cur.fetchall()
     _admin_cache.clear()
@@ -352,7 +413,7 @@ async def is_admin(user_id: int) -> bool:
 
 
 async def add_admin(user_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,)
         )
@@ -363,7 +424,7 @@ async def add_admin(user_id: int) -> None:
 async def remove_admin(user_id: int) -> None:
     if user_id == ADMIN_ID:
         return  # Asosiy adminni o'chirib bo'lmaydi
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
         await db.commit()
     _admin_cache.discard(user_id)
@@ -372,7 +433,7 @@ async def remove_admin(user_id: int) -> None:
 # ── Xodim ────────────────────────────────────────────────────────
 async def get_xodim(user_id: int) -> tuple | None:
     """Returns (status, topic_id, ism, lavozim, filial, kod)"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT status, topic_id, ism, lavozim, filial, kod FROM xodimlar WHERE user_id=?",
             (user_id,)
@@ -383,7 +444,7 @@ async def get_xodim(user_id: int) -> tuple | None:
 async def insert_xodim(user_id, ism, lavozim, kod, filial,
                        telefon1, telefon2, tugilgan_kun):
     sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("""
             INSERT OR REPLACE INTO xodimlar
             (user_id, ism, lavozim, kod, filial, telefon1, telefon2,
@@ -395,7 +456,7 @@ async def insert_xodim(user_id, ism, lavozim, kod, filial,
 
 
 async def approve_xodim(user_id: int, topic_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE xodimlar SET status='approved', topic_id=? WHERE user_id=?",
             (topic_id, user_id)
@@ -404,13 +465,13 @@ async def approve_xodim(user_id: int, topic_id: int):
 
 
 async def reject_xodim(user_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM xodimlar WHERE user_id=?", (user_id,))
         await db.commit()
 
 
 async def block_xodim(user_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE xodimlar SET status='blocked', topic_id=NULL WHERE user_id=?",
             (user_id,)
@@ -419,7 +480,7 @@ async def block_xodim(user_id: int):
 
 
 async def unblock_xodim(user_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE xodimlar SET status='approved' WHERE user_id=?",
             (user_id,)
@@ -428,7 +489,7 @@ async def unblock_xodim(user_id: int):
 
 
 async def reset_topic(user_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE xodimlar SET status='pending', topic_id=NULL WHERE user_id=?",
             (user_id,)
@@ -437,7 +498,7 @@ async def reset_topic(user_id: int):
 
 
 async def delete_xodim(user_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM xodimlar WHERE user_id=?", (user_id,))
         await db.commit()
 
@@ -446,7 +507,7 @@ async def update_xodim_field(user_id: int, field: str, value: str):
     allowed = {"ism", "lavozim", "kod", "filial"}
     if field not in allowed:
         raise ValueError(f"Ruxsat etilmagan maydon: {field}")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             f"UPDATE xodimlar SET {field}=? WHERE user_id=?",
             (value, user_id)
@@ -457,7 +518,7 @@ async def update_xodim_field(user_id: int, field: str, value: str):
 # ── Biriktirish ──────────────────────────────────────────────────
 async def get_biriktirish(agent_id: int) -> int | None:
     """Agent uchun biriktirilgan checker_id ni qaytaradi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT checker_id FROM biriktirish WHERE agent_id=?", (agent_id,)
         ) as cur:
@@ -466,7 +527,7 @@ async def get_biriktirish(agent_id: int) -> int | None:
 
 
 async def set_biriktirish(agent_id: int, checker_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT OR REPLACE INTO biriktirish (agent_id, checker_id) VALUES (?, ?)",
             (agent_id, checker_id)
@@ -475,14 +536,14 @@ async def set_biriktirish(agent_id: int, checker_id: int):
 
 
 async def delete_biriktirish(agent_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM biriktirish WHERE agent_id=?", (agent_id,))
         await db.commit()
 
 
 async def get_all_biriktirish() -> list:
     """Returns [(agent_id, agent_ism, checker_id, checker_ism)]"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT b.agent_id, a.ism, b.checker_id, c.ism
             FROM biriktirish b
@@ -494,7 +555,7 @@ async def get_all_biriktirish() -> list:
 
 async def get_agents() -> list:
     """Barcha tasdiqlangan agentlar."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar WHERE lavozim='Agent' AND status='approved'"
         ) as cur:
@@ -503,7 +564,7 @@ async def get_agents() -> list:
 
 async def get_available_checkers() -> list:
     """Supervisor, Filial Rahbari, Distribyutor — tasdiqlangan."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar
             WHERE lavozim IN ('Supervisor', 'Filial Rahbari', 'Distribyutor')
@@ -514,7 +575,7 @@ async def get_available_checkers() -> list:
 
 async def get_distributors() -> list:
     """Barcha tasdiqlangan distribyutorlar."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar
             WHERE lavozim = 'Distribyutor'
@@ -525,7 +586,7 @@ async def get_distributors() -> list:
 
 async def get_xodim_full(user_id: int) -> tuple | None:
     """Barcha maydonlar: (user_id, ism, lavozim, kod, filial, tel1, tel2, tug_kun, topic_id, status, sana)"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT user_id, ism, lavozim, kod, filial,
                    telefon1, telefon2, tugilgan_kun, topic_id, status, sana
@@ -536,7 +597,7 @@ async def get_xodim_full(user_id: int) -> tuple | None:
 
 async def search_xodimlar(query: str) -> list:
     """Returns (ism, lavozim, filial, kod, user_id, status)"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         if query.isdigit():
             async with db.execute(
                 "SELECT ism, lavozim, filial, kod, user_id, status FROM xodimlar WHERE user_id=?",
@@ -552,7 +613,7 @@ async def search_xodimlar(query: str) -> list:
 
 
 async def get_approved_xodimlar() -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT ism, lavozim, filial, kod, user_id FROM xodimlar WHERE status='approved'"
         ) as cur:
@@ -560,7 +621,7 @@ async def get_approved_xodimlar() -> list:
 
 
 async def get_pending_xodimlar() -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT user_id, ism, lavozim, kod, filial FROM xodimlar WHERE status='pending'"
         ) as cur:
@@ -568,7 +629,7 @@ async def get_pending_xodimlar() -> list:
 
 
 async def get_blocked_xodimlar() -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT user_id, ism, lavozim, filial, kod FROM xodimlar WHERE status='blocked'"
         ) as cur:
@@ -576,7 +637,7 @@ async def get_blocked_xodimlar() -> list:
 
 
 async def get_all_xodimlar_for_excel() -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT user_id, ism, lavozim, kod, filial,
                    telefon1, telefon2, tugilgan_kun, status, sana
@@ -588,7 +649,7 @@ async def get_all_xodimlar_for_excel() -> list:
 # ── Xabar guruhi ────────────────────────────────────────────────
 async def create_xabar_guruhi(user_id: int, ism: str, filial: str, topic_id: int) -> int:
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         cur = await db.execute(
             "INSERT INTO xabar_guruhi (user_id, ism, filial, topic_id, holat, vaqt) VALUES (?, ?, ?, ?, 'kutilmoqda', ?)",
             (user_id, ism, filial, topic_id, vaqt)
@@ -599,7 +660,7 @@ async def create_xabar_guruhi(user_id: int, ism: str, filial: str, topic_id: int
 
 async def get_active_group(user_id: int) -> tuple | None:
     """Oxirgi GROUP_TIMEOUT_SEC soniya ichida ochiq guruh bo'lsa (group_id, topic_id) qaytaradi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(f"""
             SELECT g.id, g.topic_id
             FROM xabar_guruhi g
@@ -614,7 +675,7 @@ async def get_active_group(user_id: int) -> tuple | None:
 
 async def get_group_info(group_id: int) -> tuple | None:
     """Returns (user_id, ism, filial, topic_id, holat)"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT user_id, ism, filial, topic_id, holat FROM xabar_guruhi WHERE id=?",
             (group_id,)
@@ -624,7 +685,7 @@ async def get_group_info(group_id: int) -> tuple | None:
 
 async def update_group_holat(group_id: int, holat: str):
     javob_vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if holat == "bajarildi" else None
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         if javob_vaqt:
             await db.execute(
                 "UPDATE xabar_guruhi SET holat=?, javob_vaqt=? WHERE id=?",
@@ -642,7 +703,7 @@ async def update_group_holat(group_id: int, holat: str):
 
 async def get_most_important_msg(group_id: int) -> tuple | None:
     """Guruhdan eng muhim xabarni qaytaradi: rasm > video > fayl > ovoz > matn."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT id, xabar_turi, msg_id,
                    CASE xabar_turi
@@ -662,7 +723,7 @@ async def get_most_important_msg(group_id: int) -> tuple | None:
 
 
 async def count_group_msgs(group_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM xabarlar WHERE group_id=?", (group_id,)
         ) as cur:
@@ -672,7 +733,7 @@ async def count_group_msgs(group_id: int) -> int:
 
 async def get_group_msgs_list(group_id: int) -> list:
     """Returns [(xabar_turi, vaqt), ...] for all messages in a group, oldest first."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT xabar_turi, vaqt FROM xabarlar WHERE group_id=? ORDER BY id ASC",
             (group_id,)
@@ -683,7 +744,7 @@ async def get_group_msgs_list(group_id: int) -> list:
 # ── Xabar ────────────────────────────────────────────────────────
 async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id, group_id=None) -> int:
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         cur = await db.execute("""
             INSERT INTO xabarlar (user_id, xodim_name, filial, xabar_turi, vaqt, holat, msg_id, group_id)
             VALUES (?, ?, ?, ?, ?, 'kutilmoqda', ?, ?)
@@ -694,7 +755,7 @@ async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id, group_id=None) 
 
 async def update_xabar_group_fwd_id(task_id: int, group_fwd_id: int):
     """Guruhga forward qilingan xabar ID sini saqlaydi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE xabarlar SET group_fwd_id=? WHERE id=?",
             (group_fwd_id, task_id)
@@ -704,7 +765,7 @@ async def update_xabar_group_fwd_id(task_id: int, group_fwd_id: int):
 
 async def get_xabar_by_group_fwd_id(group_fwd_id: int) -> tuple | None:
     """Guruh forward ID si bo'yicha (user_id, msg_id) qaytaradi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT user_id, msg_id FROM xabarlar WHERE group_fwd_id=?",
             (group_fwd_id,)
@@ -714,7 +775,7 @@ async def get_xabar_by_group_fwd_id(group_fwd_id: int) -> tuple | None:
 
 async def insert_admin_msg_map(user_id: int, group_msg_id: int, private_msg_id: int):
     """Admin xabari → xodim shaxsiy chati mapping ni saqlaydi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT INTO admin_msg_map (user_id, group_msg_id, private_msg_id) VALUES (?, ?, ?)",
             (user_id, group_msg_id, private_msg_id)
@@ -724,7 +785,7 @@ async def insert_admin_msg_map(user_id: int, group_msg_id: int, private_msg_id: 
 
 async def get_group_msg_id_by_private(user_id: int, private_msg_id: int) -> int | None:
     """Xodim shaxsiy chatidagi xabar ID si bo'yicha guruh xabar ID sini qaytaradi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT group_msg_id FROM admin_msg_map WHERE user_id=? AND private_msg_id=?",
             (user_id, private_msg_id)
@@ -735,7 +796,7 @@ async def get_group_msg_id_by_private(user_id: int, private_msg_id: int) -> int 
 
 async def get_xodim_by_topic(topic_id: int) -> tuple | None:
     """Returns (user_id, ism) for the employee who owns this topic."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT user_id, ism FROM xodimlar WHERE topic_id=? AND status='approved'",
             (topic_id,)
@@ -745,7 +806,7 @@ async def get_xodim_by_topic(topic_id: int) -> tuple | None:
 
 async def get_xabar(task_id: int) -> tuple | None:
     """Returns (user_id, xodim_name, msg_id, holat)"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT user_id, xodim_name, msg_id, holat FROM xabarlar WHERE id=?",
             (task_id,)
@@ -757,7 +818,7 @@ async def update_xabar_holat(task_id: int, holat: str):
     javob_vaqt = (
         datetime.now().strftime("%Y-%m-%d %H:%M:%S") if holat == "bajarildi" else None
     )
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         if javob_vaqt:
             await db.execute(
                 "UPDATE xabarlar SET holat=?, javob_vaqt=? WHERE id=?",
@@ -769,7 +830,7 @@ async def update_xabar_holat(task_id: int, holat: str):
 
 
 async def get_all_xabarlar_for_excel() -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT id, user_id, xodim_name, filial,
                    xabar_turi, vaqt, holat, javob_vaqt
@@ -780,7 +841,7 @@ async def get_all_xabarlar_for_excel() -> list:
 
 async def get_kunlik_statistika() -> list:
     """Har bir xodim uchun bugungi guruh / bajarilgan soni."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT ism, filial,
                    COUNT(*) AS jami,
@@ -794,7 +855,7 @@ async def get_kunlik_statistika() -> list:
 
 
 async def get_statistika() -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         # Yangi tizim: guruhlar
         async with db.execute(
             "SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) FROM xabar_guruhi"
@@ -836,7 +897,7 @@ async def get_statistika() -> dict:
 
 # ── FAQ ──────────────────────────────────────────────────────────
 async def get_faq_kategoriyalar() -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT id, emoji, nomi FROM faq_kategoriya ORDER BY tartib, id"
         ) as cur:
@@ -844,7 +905,7 @@ async def get_faq_kategoriyalar() -> list:
 
 
 async def get_faq_savollar(kategoriya_id: int) -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT id, savol FROM faq WHERE kategoriya_id=? ORDER BY tartib, id",
             (kategoriya_id,)
@@ -853,7 +914,7 @@ async def get_faq_savollar(kategoriya_id: int) -> list:
 
 
 async def get_faq_item(faq_id: int) -> tuple | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT savol, javob, kategoriya_id FROM faq WHERE id=?",
             (faq_id,)
@@ -862,7 +923,7 @@ async def get_faq_item(faq_id: int) -> tuple | None:
 
 
 async def add_faq_kategoriya(emoji: str, nomi: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         cur = await db.execute(
             "INSERT INTO faq_kategoriya (emoji, nomi) VALUES (?, ?)",
             (emoji, nomi)
@@ -872,7 +933,7 @@ async def add_faq_kategoriya(emoji: str, nomi: str) -> int:
 
 
 async def add_faq(kategoriya_id: int, savol: str, javob: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         cur = await db.execute(
             "INSERT INTO faq (kategoriya_id, savol, javob) VALUES (?, ?, ?)",
             (kategoriya_id, savol, javob)
@@ -882,13 +943,13 @@ async def add_faq(kategoriya_id: int, savol: str, javob: str) -> int:
 
 
 async def delete_faq(faq_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM faq WHERE id=?", (faq_id,))
         await db.commit()
 
 
 async def delete_faq_kategoriya(kategoriya_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM faq WHERE kategoriya_id=?", (kategoriya_id,))
         await db.execute("DELETE FROM faq_kategoriya WHERE id=?", (kategoriya_id,))
         await db.commit()
@@ -896,7 +957,7 @@ async def delete_faq_kategoriya(kategoriya_id: int):
 
 # ── Urgency ──────────────────────────────────────────────────────
 async def set_urgency(group_id: int, urgency: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE xabar_guruhi SET urgency=? WHERE id=?", (urgency, group_id)
         )
@@ -905,7 +966,7 @@ async def set_urgency(group_id: int, urgency: str):
 
 async def get_group_urgency(group_id: int) -> str | None:
     """Guruhning urgency darajasini qaytaradi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT urgency FROM xabar_guruhi WHERE id=?", (group_id,)
         ) as cur:
@@ -916,7 +977,7 @@ async def get_group_urgency(group_id: int) -> str | None:
 # ── Baholash (reyting) ───────────────────────────────────────────
 async def add_baholash(group_id: int, checker_id: int, agent_id: int, yulduz: int):
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT OR REPLACE INTO baholash (group_id, checker_id, agent_id, yulduz, vaqt) VALUES (?,?,?,?,?)",
             (group_id, checker_id, agent_id, yulduz, vaqt)
@@ -925,7 +986,7 @@ async def add_baholash(group_id: int, checker_id: int, agent_id: int, yulduz: in
 
 
 async def get_agent_rating_summary(agent_id: int) -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT ROUND(AVG(yulduz),1), COUNT(*) FROM baholash WHERE agent_id=?",
             (agent_id,)
@@ -941,7 +1002,7 @@ async def get_agent_rating_summary(agent_id: int) -> dict:
 
 async def get_agent_leaderboard() -> list:
     """[(user_id, ism, filial, avg, total, haftalik_avg)]"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT x.user_id, x.ism, x.filial,
                    ROUND(AVG(b.yulduz),1) as avg_r,
@@ -959,7 +1020,7 @@ async def get_agent_leaderboard() -> list:
 # ── Checker faollik ──────────────────────────────────────────────
 async def update_checker_faollik(checker_id: int):
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT OR REPLACE INTO checker_faollik (checker_id, last_active) VALUES (?,?)",
             (checker_id, vaqt)
@@ -968,7 +1029,7 @@ async def update_checker_faollik(checker_id: int):
 
 
 async def get_checker_faollik(checker_id: int) -> str | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT last_active FROM checker_faollik WHERE checker_id=?", (checker_id,)
         ) as cur:
@@ -979,7 +1040,7 @@ async def get_checker_faollik(checker_id: int) -> str | None:
 # ── Haftalik hisobot ─────────────────────────────────────────────
 async def get_checker_weekly_stats() -> list:
     """[(checker_ism, agent_count, topshiriq, bajarildi, avg_reyting)]"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT c.ism,
                    COUNT(DISTINCT bir.agent_id) as agents,
@@ -1001,7 +1062,7 @@ async def get_checker_weekly_stats() -> list:
 # ── Agent faollik tekshiruvi ─────────────────────────────────────
 async def get_agents_without_messages_today() -> list:
     """Bugun hech qanday xabar yubormaganlar: [(user_id, ism)]"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT x.user_id, x.ism FROM xodimlar x
             WHERE x.lavozim='Agent' AND x.status='approved'
@@ -1023,7 +1084,7 @@ async def get_filial_stats(period: str = "haftalik") -> list:
         "hammasi":  "date('2000-01-01')",
     }.get(period, "date('now','-7 days','localtime')")
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(f"""
             SELECT
                 x.filial,
@@ -1048,7 +1109,7 @@ async def get_filial_stats(period: str = "haftalik") -> list:
 
 
 async def get_agent_today_stats(agent_id: int) -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END)
             FROM xabar_guruhi
@@ -1060,7 +1121,7 @@ async def get_agent_today_stats(agent_id: int) -> dict:
 
 async def get_unassigned_agents() -> list:
     """Checker biriktirilmagan approved agentlar: [(ism, user_id, filial, kod)]"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT x.ism, x.user_id, x.filial, x.kod
             FROM xodimlar x
@@ -1072,7 +1133,7 @@ async def get_unassigned_agents() -> list:
 
 async def get_latest_group_fwd_id(group_id: int) -> int | None:
     """Guruh uchun oxirgi forward qilingan xabar ID sini qaytaradi."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT group_fwd_id FROM xabarlar WHERE group_id=? AND group_fwd_id IS NOT NULL ORDER BY id DESC LIMIT 1",
             (group_id,)
@@ -1083,7 +1144,7 @@ async def get_latest_group_fwd_id(group_id: int) -> int | None:
 
 async def get_all_biriktirish_detailed() -> list:
     """[(agent_id, agent_ism, checker_id, checker_ism, agent_filial, agent_status)]"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute("""
             SELECT b.agent_id, a.ism, b.checker_id, c.ism, a.filial, a.status
             FROM biriktirish b
@@ -1100,7 +1161,7 @@ async def insert_klient(rasm_file_id, firma_nomi, telefon1, telefon2, inn, orien
                        agent_kod, vizit_kun, chastota, limit_summa, brendlar, supervisor_id) -> int:
     """Yangi klientni qo'shadi."""
     sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         cur = await db.execute("""
             INSERT INTO klientlar (rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
                                   lokatsiya_lat, lokatsiya_lon, lokatsiya_address, kategoriya, dokon_turi,
@@ -1117,7 +1178,7 @@ async def insert_klient(rasm_file_id, firma_nomi, telefon1, telefon2, inn, orien
 
 async def get_klient(klient_id: int) -> tuple | None:
     """Full klient info."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM klientlar WHERE id=?", (klient_id,)
         ) as cur:
@@ -1126,7 +1187,7 @@ async def get_klient(klient_id: int) -> tuple | None:
 
 async def get_klientlar_by_supervisor(supervisor_id: int) -> list:
     """Supervisorning barcha klientlari."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM klientlar WHERE supervisor_id=? ORDER BY sana DESC",
             (supervisor_id,)
@@ -1136,7 +1197,7 @@ async def get_klientlar_by_supervisor(supervisor_id: int) -> list:
 
 async def get_all_klientlar(status: str | None = None) -> list:
     """Barcha klientlar (admin uchun)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         if status:
             async with db.execute(
                 "SELECT * FROM klientlar WHERE status=? ORDER BY sana DESC", (status,)
@@ -1151,7 +1212,7 @@ async def get_all_klientlar(status: str | None = None) -> list:
 
 async def approve_klient(klient_id: int):
     """Klientni tasdiqlash."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE klientlar SET status='approved' WHERE id=?", (klient_id,)
         )
@@ -1160,7 +1221,7 @@ async def approve_klient(klient_id: int):
 
 async def reject_klient(klient_id: int, reason: str):
     """Klientni rad etish."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE klientlar SET status='rejected', reject_reason=? WHERE id=?",
             (reason, klient_id)
@@ -1181,7 +1242,7 @@ async def search_klientlar(query: str) -> list:
     else:
         phone_q = digits
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         # Strip '+' and spaces from stored phone before comparing
         async with db.execute("""
             SELECT * FROM klientlar
@@ -1198,7 +1259,7 @@ async def search_klientlar(query: str) -> list:
 
 async def get_all_klientlar_for_excel() -> list:
     """Excel export uchun barcha klientlar."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM klientlar WHERE status='approved' ORDER BY firma_nomi"
         ) as cur:
@@ -1207,7 +1268,7 @@ async def get_all_klientlar_for_excel() -> list:
 
 async def get_klientlar_stats() -> dict:
     """Klientlar soni statuslar bo'yicha."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT status, COUNT(*) FROM klientlar GROUP BY status"
         ) as cur:
@@ -1222,7 +1283,7 @@ async def get_klientlar_stats() -> dict:
 
 async def get_opened_klientlar_for_excel() -> list:
     """Ochilgan (pending + approved) klientlar Excel uchun."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             """SELECT id, firma_nomi, telefon1, telefon2, inn, orienter,
                       lokatsiya_lat, lokatsiya_lon, lokatsiya_address,
@@ -1243,7 +1304,7 @@ async def insert_sorov(agent_id: int, agent_ism: str, tur: str,
                        foto_ids: str | None, izoh: str | None,
                        supervisor_id: int | None) -> int:
     sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         cur = await db.execute(
             """INSERT INTO sorovlar
                (agent_id, agent_ism, tur, dokon_nomi, yangi_qiymat,
@@ -1259,7 +1320,7 @@ async def insert_sorov(agent_id: int, agent_ism: str, tur: str,
 
 
 async def get_sorov(sorov_id: int) -> tuple | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM sorovlar WHERE id=?", (sorov_id,)
         ) as cur:
@@ -1267,7 +1328,7 @@ async def get_sorov(sorov_id: int) -> tuple | None:
 
 
 async def update_sorov_status(sorov_id: int, status: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE sorovlar SET status=? WHERE id=?", (status, sorov_id)
         )
@@ -1275,7 +1336,7 @@ async def update_sorov_status(sorov_id: int, status: str) -> None:
 
 
 async def update_sorov_sup_msg_id(sorov_id: int, msg_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE sorovlar SET sup_msg_id=? WHERE id=?", (msg_id, sorov_id)
         )
@@ -1283,7 +1344,7 @@ async def update_sorov_sup_msg_id(sorov_id: int, msg_id: int) -> None:
 
 
 async def update_sorov_admin_msg_id(sorov_id: int, msg_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE sorovlar SET admin_msg_id=? WHERE id=?", (msg_id, sorov_id)
         )
@@ -1291,7 +1352,7 @@ async def update_sorov_admin_msg_id(sorov_id: int, msg_id: int) -> None:
 
 
 async def get_sorov_by_sup_msg_id(msg_id: int) -> tuple | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM sorovlar WHERE sup_msg_id=?", (msg_id,)
         ) as cur:
@@ -1299,7 +1360,7 @@ async def get_sorov_by_sup_msg_id(msg_id: int) -> tuple | None:
 
 
 async def get_sorov_by_admin_msg_id(msg_id: int) -> tuple | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM sorovlar WHERE admin_msg_id=?", (msg_id,)
         ) as cur:
@@ -1307,7 +1368,7 @@ async def get_sorov_by_admin_msg_id(msg_id: int) -> tuple | None:
 
 
 async def update_sorov_group_id(sorov_id: int, group_chat_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE sorovlar SET group_id=? WHERE id=?", (group_chat_id, sorov_id)
         )
@@ -1317,7 +1378,7 @@ async def update_sorov_group_id(sorov_id: int, group_chat_id: int) -> None:
 # ── Supervisor ↔ Group mapping ────────────────────────────────────
 
 async def set_supervisor_group(supervisor_id: int, group_chat_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT OR REPLACE INTO supervisor_group (supervisor_id, group_chat_id) VALUES (?, ?)",
             (supervisor_id, group_chat_id)
@@ -1326,7 +1387,7 @@ async def set_supervisor_group(supervisor_id: int, group_chat_id: int) -> None:
 
 
 async def get_supervisor_group(supervisor_id: int) -> int | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT group_chat_id FROM supervisor_group WHERE supervisor_id=?",
             (supervisor_id,)
@@ -1336,14 +1397,14 @@ async def get_supervisor_group(supervisor_id: int) -> int | None:
 
 
 async def delete_supervisor_group(supervisor_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM supervisor_group WHERE supervisor_id=?", (supervisor_id,))
         await db.commit()
 
 
 async def check_duplicate_firma(firma_nomi: str) -> dict | None:
     """Firma nomi bo'yicha dublikat tekshirish."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM klientlar WHERE LOWER(firma_nomi) = LOWER(?) LIMIT 1",
             (firma_nomi,)
@@ -1364,7 +1425,7 @@ async def insert_audit_log(user_id: int, user_role: str, action_type: str,
                             target: str | None = None, old_value: str | None = None,
                             new_value: str | None = None, status: str | None = None,
                             request_id: int | None = None) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute("""
             INSERT INTO audit_log
               (user_id, user_role, action_type, target, old_value, new_value, status, request_id)
@@ -1383,7 +1444,7 @@ async def get_audit_logs(filter_type: str = "all", limit: int = 20) -> list:
         where = "WHERE a.status = 'rejected'"
     else:
         where = ""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(f"""
             SELECT a.id, a.user_id, a.user_role, a.action_type, a.target,
                    a.old_value, a.new_value, a.status, a.request_id, a.created_at,
@@ -1398,7 +1459,7 @@ async def get_audit_logs(filter_type: str = "all", limit: int = 20) -> list:
 
 async def check_duplicate_telefon(telefon: str) -> dict | None:
     """Telefon raqami bo'yicha dublikat tekshirish."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM klientlar WHERE telefon1 = ? OR telefon2 = ? LIMIT 1",
             (telefon, telefon)
