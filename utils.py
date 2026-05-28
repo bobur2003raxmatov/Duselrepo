@@ -1,8 +1,9 @@
 import os
 import logging
 import tempfile
-import pandas as pd
 from datetime import datetime
+
+from openpyxl import Workbook
 
 from telegram.ext import ContextTypes
 from config import GROUP_CHAT_ID, ADMIN_ID, CHECKER_TIMEOUT_SEC
@@ -194,23 +195,26 @@ async def generate_excel(x_data: list, m_data: list) -> str:
     fd, filename = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
 
-    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
-        pd.DataFrame(
-            x_data,
-            columns=[
-                "User ID", "Ism", "Lavozim", "Kod", "Filial",
-                "Tel 1", "Tel 2", "Tug'ilgan kun", "Status", "Ro'yxatdan o'tgan sana",
-            ]
-        ).to_excel(writer, sheet_name="Xodimlar", index=False)
+    wb = Workbook()
 
-        pd.DataFrame(
-            m_data,
-            columns=[
-                "Vazifa ID", "Xodim ID", "Xodim Ismi", "Filial",
-                "Xabar Turi", "Xabar Kelgan Vaqt", "Xabar Holati", "Bajarilgan Vaqt",
-            ]
-        ).to_excel(writer, sheet_name="Topshiriqlar_SLA", index=False)
+    ws1 = wb.active
+    ws1.title = "Xodimlar"
+    ws1.append([
+        "User ID", "Ism", "Lavozim", "Kod", "Filial",
+        "Tel 1", "Tel 2", "Tug'ilgan kun", "Status", "Ro'yxatdan o'tgan sana",
+    ])
+    for row in x_data:
+        ws1.append(list(row))
 
+    ws2 = wb.create_sheet("Topshiriqlar_SLA")
+    ws2.append([
+        "Vazifa ID", "Xodim ID", "Xodim Ismi", "Filial",
+        "Xabar Turi", "Xabar Kelgan Vaqt", "Xabar Holati", "Bajarilgan Vaqt",
+    ])
+    for row in m_data:
+        ws2.append(list(row))
+
+    wb.save(filename)
     return filename
 
 
@@ -219,15 +223,17 @@ async def generate_klientlar_excel(rows: list) -> str:
     fd, filename = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
 
-    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
-        pd.DataFrame(
-            rows,
-            columns=[
-                "ID", "Firma nomi", "Tel 1", "Tel 2", "INN",
-                "Orienter", "Lat", "Lon", "Manzil",
-                "Kategoriya", "Do'kon turi", "Distributor", "Agent kodi",
-                "Limit", "Brendlar", "Holat", "Sana", "Supervisor ID",
-            ]
-        ).to_excel(writer, sheet_name="Ochilgan Klientlar", index=False)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Ochilgan Klientlar"
+    ws.append([
+        "ID", "Firma nomi", "Tel 1", "Tel 2", "INN",
+        "Orienter", "Lat", "Lon", "Manzil",
+        "Kategoriya", "Do'kon turi", "Distributor", "Agent kodi",
+        "Limit", "Brendlar", "Holat", "Sana", "Supervisor ID",
+    ])
+    for row in rows:
+        ws.append(list(row))
 
+    wb.save(filename)
     return filename
