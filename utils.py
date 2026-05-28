@@ -282,11 +282,13 @@ async def generate_full_excel(data: dict) -> str:
 
 
 async def pending_sorovlar_alert_job(context: ContextTypes.DEFAULT_TYPE):
-    from database import get_pending_sorovlar_by_supervisor
+    from database import get_pending_sorovlar_by_supervisor, is_admin
     sup_counts = await get_pending_sorovlar_by_supervisor()
     if not sup_counts:
         return
     for sup_id, count in sup_counts.items():
+        if await is_admin(sup_id):
+            continue
         try:
             await context.bot.send_message(
                 chat_id=sup_id,
