@@ -379,6 +379,17 @@ async def sorov_tur_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sorov_dokon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["sorov_data"]["dokon_nomi"] = update.message.text.strip()
+    return await _sorov_dokon_next(update, context)
+
+
+async def sorov_dokon_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    photo = update.message.photo[-1]  # eng yuqori sifatli
+    context.user_data["sorov_data"]["dokon_nomi"] = f"[rasm:{photo.file_id}]"
+    context.user_data["sorov_data"]["dokon_foto_id"] = photo.file_id
+    return await _sorov_dokon_next(update, context)
+
+
+async def _sorov_dokon_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tur = context.user_data["sorov_data"]["tur"]
 
     if tur == "lokatsiya":

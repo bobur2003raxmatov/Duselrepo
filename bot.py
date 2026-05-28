@@ -83,7 +83,7 @@ from handlers import (
 )
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
-    sorov_dokon_olish, sorov_lok_olish, sorov_tel_olish,
+    sorov_dokon_olish, sorov_dokon_foto_olish, sorov_lok_olish, sorov_tel_olish,
     sorov_foto_olish, sorov_izoh_olish,
     batch_collect_handler, batch_callback,
     sorov_sup_callback,
@@ -224,7 +224,10 @@ def build_application() -> Application:
         ],
         states={
             SOROV_TUR:  [CallbackQueryHandler(sorov_tur_olish, pattern="^sorov_tur_")],
-            SOROV_DOKON:[MessageHandler(filters.TEXT & ~filters.COMMAND, sorov_dokon_olish)],
+            SOROV_DOKON: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, sorov_dokon_olish),
+                MessageHandler(filters.PHOTO, sorov_dokon_foto_olish),
+            ],
             SOROV_LOK:  [MessageHandler(filters.LOCATION, sorov_lok_olish)],
             SOROV_TEL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, sorov_tel_olish)],
             SOROV_FOTO: [MessageHandler(filters.PHOTO, sorov_foto_olish)],
