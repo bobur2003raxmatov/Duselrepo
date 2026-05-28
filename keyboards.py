@@ -11,6 +11,11 @@ def _dokon_slug(name: str) -> str:
     return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
 
 
+def instruksiya_lavozim_kb() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(lav, callback_data=f"instr_lav_{lav}")] for lav in LAVOZIMLAR]
+    return InlineKeyboardMarkup(rows)
+
+
 def lavozim_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [[lav] for lav in LAVOZIMLAR],

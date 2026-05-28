@@ -48,6 +48,7 @@ from config import (
     SOROV_FOTO, SOROV_IZOH,
     SOROV_BATCH_COLLECT, SOROV_BATCH_PREVIEW,
     LIMIT_DOKON, LIMIT_SUMMA,
+    INSTR_MATN,
 )
 from database import init_db
 from utils import daily_report_job, weekly_report_job, agent_reminder_job
@@ -83,6 +84,9 @@ from handlers import (
     topic_closed_handler,
     admin_upload_db,
     add_admin_command,
+    instruksiya_cmd,
+    admin_instruksiya_lavozim_cb,
+    admin_instruksiya_matn_save,
 )
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
@@ -91,7 +95,6 @@ from sorov_handlers import (
     batch_collect_handler, batch_callback,
     sorov_sup_callback,
     limit_start, limit_dokon_olish, limit_summa_olish,
-    instruksiya_cmd,
 )
 
 # ── Logging: console + file ───────────────────────────────────────
@@ -257,13 +260,26 @@ def build_application() -> Application:
         per_message=False,
     )
 
+    instr_conv = ConversationHandler(
+        entry_points=[CommandHandler("instruksiya", instruksiya_cmd)],
+        states={
+            INSTR_MATN: [
+                CallbackQueryHandler(admin_instruksiya_lavozim_cb, pattern=r"^instr_lav_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_instruksiya_matn_save),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+        per_message=False,
+    )
+
     app.add_handler(royxat_conv)
     app.add_handler(xodim_mgmt_conv)
     app.add_handler(biriktir_conv)
     app.add_handler(klient_conv)
     app.add_handler(sorov_conv)
     app.add_handler(limit_conv)
-    app.add_handler(CommandHandler("instruksiya", instruksiya_cmd))
+    app.add_handler(instr_conv)
 
     app.add_handler(MessageHandler(filters.Regex(r"^🏆 Reyting$"),                 admin_reyting_menu))
     app.add_handler(MessageHandler(filters.Regex(r"^📋 Tarix$"),                   admin_tarix))

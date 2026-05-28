@@ -65,4 +65,9 @@ from handlers._core import (
     topic_closed_handler,
     admin_upload_db,
     add_admin_command,
+
+    # Instruksiya
+    instruksiya_cmd,
+    admin_instruksiya_lavozim_cb,
+    admin_instruksiya_matn_save,
 )

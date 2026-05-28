@@ -27,6 +27,7 @@ from keyboards import (
     klientlar_search_page_inline,
     mening_klientlar_kb,
     agent_kb, supervisor_kb, filial_rahbari_kb,
+    instruksiya_lavozim_kb,
 )
 
 
@@ -54,6 +55,7 @@ from config import (
     KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
     KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
     KLIENT_LIMIT, KLIENT_CONFIRM,
+    INSTR_MATN,
 )
 
 logger = logging.getLogger(__name__)
@@ -1634,6 +1636,62 @@ async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ `{new_id}` admin sifatida qo'shildi.\nU `/start` bosishi kerak.",
         parse_mode="Markdown",
     )
+
+
+async def instruksiya_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if await db.is_admin(uid):
+        await update.message.reply_text(
+            "📋 *Qaysi lavozim uchun instruksiya tahrirlaysiz?*",
+            parse_mode="Markdown",
+            reply_markup=instruksiya_lavozim_kb(),
+        )
+        return INSTR_MATN
+
+    user = await db.get_xodim(uid)
+    if not user:
+        await update.message.reply_text("❌ Siz tizimda ro'yxatdan o'tmagansiz.")
+        return ConversationHandler.END
+
+    _, _, _, lavozim, *_ = user
+    matn = await db.get_instruksiya(lavozim)
+    if matn:
+        await update.message.reply_text(
+            f"📖 *{lavozim} uchun yo'riqnoma*\n\n{matn}",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "📖 Yo'riqnoma hali qo'shilmagan.\nAdmin tez orada qo'shadi."
+        )
+    return ConversationHandler.END
+
+
+async def admin_instruksiya_lavozim_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lavozim = query.data[len("instr_lav_"):]
+    context.user_data["instr_lavozim"] = lavozim
+    mavjud = await db.get_instruksiya(lavozim)
+    mavjud_text = f"\n\n📄 *Joriy matn:*\n{mavjud}" if mavjud else ""
+    await query.edit_message_text(
+        f"✏️ *{lavozim}* uchun instruksiya matnini yuboring:{mavjud_text}\n\n_Bekor qilish: /cancel_",
+        parse_mode="Markdown",
+    )
+    return INSTR_MATN
+
+
+async def admin_instruksiya_matn_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lavozim = context.user_data.pop("instr_lavozim", None)
+    if not lavozim:
+        return ConversationHandler.END
+    await db.set_instruksiya(lavozim, update.message.text.strip())
+    await update.message.reply_text(
+        f"✅ *{lavozim}* uchun instruksiya saqlandi!",
+        parse_mode="Markdown",
+        reply_markup=admin_kb(),
+    )
+    return ConversationHandler.END
 
 
 async def admin_upload_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
