@@ -41,19 +41,20 @@ DOKON_TURLARI = [
 DOKON_SLUGLARI = {re.sub(r'[^a-z0-9]+', '_', k.lower()).strip('_'): k for k in DOKON_TURLARI}
 
 AGENT_PREFIX_REGIONS = {
-    "AN": "Andijon",
-    "BX": "Buxoro",
-    "FA": "Farg'ona",
-    "QQ": "Qo'qon",
-    "TM": "Termiz",
-    "XM": "Xorazm",
-    "JZ": "Jizzax",
-    "KS": "Koson",
-    "SM": "Samarqand",
-    "NM": "Namangan",
-    "NK": "Nukus",
-    "NV": "Navoiy",
-    "GJ": "Guliston",
+    "AN":  "Andijon",
+    "BX":  "Buxoro",
+    "FA":  "Farg'ona",
+    "QQ":  "Qo'qon",
+    "QSH": "Qashqadaryo",
+    "TM":  "Termiz",
+    "XM":  "Xorazm",
+    "JZ":  "Jizzax",
+    "KS":  "Koson",
+    "SM":  "Samarqand",
+    "NM":  "Namangan",
+    "NK":  "Nukus",
+    "NV":  "Navoiy",
+    "GJ":  "Guliston",
 }
 
 AGENT_KODLAR = {

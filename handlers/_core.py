@@ -49,7 +49,7 @@ from config import (
     EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
     BIRIKTIR_EDIT_VALUE,
-    DOKON_TURLARI, DOKON_SLUGLARI, AGENT_KODLAR, AGENT_PREFIX_REGIONS, SUPERVISOR_KODLAR,
+    DOKON_TURLARI, DOKON_SLUGLARI, AGENT_PREFIX_REGIONS,
     KLIENT_RASM, KLIENT_FIRMA_NOMI, KLIENT_TELEFON1, KLIENT_TELEFON2,
     KLIENT_INN, KLIENT_ORIENTER, KLIENT_LOKATSIYA, KLIENT_KATEGORIYA,
     KLIENT_DOKON_TURI, KLIENT_DISTRIBUTOR, KLIENT_AGENT_KOD,
@@ -351,55 +351,37 @@ async def lavozim_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return FILIAL
 
 
+def _match_prefix(kod: str):
+    """Return (prefix, region) if kod starts with a known prefix, else None.
+    Tries 3-char prefix first (e.g. QSH), then 2-char (e.g. AN)."""
+    upper = kod.upper()
+    for length in (3, 2):
+        prefix = upper[:length]
+        region = AGENT_PREFIX_REGIONS.get(prefix)
+        if region:
+            return prefix, region
+    return None
+
+
 async def kod_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kod = update.message.text.strip().upper()
+    kod = update.message.text.strip()
     lavozim = context.user_data.get("lavozim", "")
 
-    if lavozim == "Agent":
-        if kod not in AGENT_KODLAR:
+    if lavozim in ("Agent", "Supervisor"):
+        match = _match_prefix(kod)
+        if not match:
+            prefixes = ", ".join(sorted(AGENT_PREFIX_REGIONS))
             await update.message.reply_text(
-                "❌ Bu agent kodi tizimda mavjud emas.\n"
-                "Iltimos, to'g'ri agent kodini kiriting:"
+                f"❌ Noto'g'ri kod prefiksi.\n"
+                f"Qabul qilinadigan prefikslar: {prefixes}\n\n"
+                "Qayta kiriting:"
             )
             return KOD
-        prefix = kod[:2]
-        region = AGENT_PREFIX_REGIONS.get(prefix)
-        if not region:
-            await update.message.reply_text(
-                "❌ Agent kodining prefiksi noto'g'ri.\n"
-                "Iltimos, to'g'ri agent kodini kiriting:"
-            )
-            return KOD
+        _, region = match
         context.user_data["kod"] = kod
         context.user_data["filial"] = region
         await update.message.reply_text(
-            f"✅ Agent kodi tasdiqlandi: *{kod}*\n"
-            f"📍 Hudud avtomatik tanlandi: *{region}*\n\n"
-            "📱 Telefon raqamingizni quyidagi tugma orqali yuboring:",
-            parse_mode="Markdown",
-            reply_markup=telefon_kb(),
-        )
-        return TELEFON
-
-    if lavozim == "Supervisor":
-        if kod not in SUPERVISOR_KODLAR:
-            await update.message.reply_text(
-                "❌ Bu supervisor kodi tizimda mavjud emas.\n"
-                "Supervisor kodi format: *XX100*\n_(Masalan: AN100, SM100)_\n\nQayta kiriting:",
-                parse_mode="Markdown",
-            )
-            return KOD
-        prefix = kod[:2]
-        region = AGENT_PREFIX_REGIONS.get(prefix)
-        if not region:
-            await update.message.reply_text(
-                "❌ Supervisor kodining prefiksi noto'g'ri.\nQayta kiriting:"
-            )
-            return KOD
-        context.user_data["kod"] = kod
-        context.user_data["filial"] = region
-        await update.message.reply_text(
-            f"✅ Supervisor kodi tasdiqlandi: *{kod}*\n"
+            f"✅ Kod tasdiqlandi: *{kod}*\n"
             f"📍 Hudud avtomatik tanlandi: *{region}*\n\n"
             "📱 Telefon raqamingizni quyidagi tugma orqali yuboring:",
             parse_mode="Markdown",
