@@ -81,7 +81,6 @@ from handlers import (
     klient_reject_reason,
     admin_tarix, tarix_filter_callback,
     topic_closed_handler,
-    admin_download_db,
     admin_upload_db,
 )
 from sorov_handlers import (
@@ -271,8 +270,6 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^⏳ Kutilayotgan so'rovlar$"), admin_kutilayotganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
-    app.add_handler(MessageHandler(filters.Regex(r"^🗄 Bazani yuklab olish$"),   admin_download_db))
-    app.add_handler(CommandHandler("download_db", admin_download_db))
     app.add_handler(CommandHandler("upload_db",   admin_upload_db))
     from config import ADMIN_ID
     app.add_handler(MessageHandler(
@@ -327,7 +324,6 @@ async def post_init(app: Application):
         [
             BotCommand("start",       "Botni qayta ishga tushirish"),
             BotCommand("new_client",  "Yangi klient registratsiyasi"),
-            BotCommand("download_db", "SQLite bazani yuklab olish"),
         ],
         scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
     )
