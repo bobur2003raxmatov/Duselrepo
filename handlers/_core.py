@@ -71,6 +71,11 @@ def rate_limited(uid: int) -> bool:
     _last_msg_time[uid] = now
     return False
 
+_YUBORISH_BTN = "📤 Yuborish"
+
+def _yuborish_kb():
+    return ReplyKeyboardMarkup([[_YUBORISH_BTN]], resize_keyboard=True)
+
 
 def em(text) -> str:
     """Markdown v1 uchun foydalanuvchi matnini xavfsiz qiladi."""
@@ -124,6 +129,109 @@ def _schedule_sla(context, group_id: int, ism: str):
         data={"group_id": group_id, "x_ism": ism, "reminder": 2},
         name=f"sla_{group_id}_2",
     )
+
+
+async def _send_buffered(
+    context, msg, uid: int, ism: str, lavozim: str, filial: str, topic_id: int, buf: list[str]
+):
+    """Buferdagi matn xabarlarini birlashtirib admin guruhiga yuboradi (1 ta so'rov sifatida)."""
+    now_str  = datetime.now().strftime("%H:%M")
+    combined = "\n".join(buf)
+
+    group_id = await db.create_xabar_guruhi(uid, ism, filial, topic_id)
+    await db.insert_xabar(uid, ism, filial, "💬 Birlashtrilgan xabar", msg.message_id, group_id)
+
+    card = (
+        f"👤 Xodim: {ism}\n"
+        f"🏢 Filial: {filial}\n"
+        f"💬 Xabar:\n"
+        f'"{combined}"\n'
+        f"🕐 Vaqt: {now_str}\n"
+        f"🆔 So'rov #{group_id}"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            message_thread_id=topic_id,
+            text=card,
+            reply_markup=group_sorov_inline(group_id),
+        )
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"📬 *Yangi topshiriq!*\n👤 {em(ism)}  |  🔢 #{group_id}",
+            parse_mode="Markdown",
+            reply_markup=group_sorov_inline(group_id),
+        )
+        await msg.reply_text(
+            f"✅ #{group_id}-sonli so'rovingiz qabul qilindi. Admin javobini kuting.",
+            reply_markup=_role_keyboard(lavozim),
+        )
+
+        checker_id = await db.get_biriktirish(uid) if lavozim == "Agent" else None
+
+        if checker_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=f"#{group_id} topshiriqning muhimlilik darajasini tanlang:",
+                    reply_markup=urgency_kb(group_id),
+                    disable_notification=True,
+                )
+            except Exception:
+                pass
+            context.job_queue.run_once(
+                urgency_timeout_job,
+                when=URGENCY_TIMEOUT_SEC,
+                data={"group_id": group_id, "checker_id": checker_id, "ism": ism},
+                name=f"urgency_{group_id}",
+            )
+            context.job_queue.run_once(
+                checker_timeout_job,
+                when=CHECKER_TIMEOUT_SEC,
+                data={"group_id": group_id, "ism": ism},
+                name=f"checker_timeout_{group_id}",
+            )
+        else:
+            _schedule_sla(context, group_id, ism)
+            if lavozim == "Agent":
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=(
+                            f"⚠️ *{em(ism)}* uchun checker biriktirilmagan!\n"
+                            f"'🔗 Biriktirish' menyusidan biriktiring."
+                        ),
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
+
+    except BadRequest as e:
+        if "message thread not found" in str(e).lower():
+            await db.reset_topic(uid)
+            await msg.reply_text(
+                "⚠️ Guruhdagi kanalingiz o'chirilgan. Qayta tasdiqlash kutilmoqda.",
+                reply_markup=_role_keyboard(lavozim),
+            )
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🔄 *Mavzusi o'chirilgan xodim:*\n\n👤 {ism} | {lavozim}",
+                parse_mode="Markdown",
+                reply_markup=tasdiq_inline(uid),
+            )
+        else:
+            logger.error(f"Buferlangan xabar yuborishda xato (uid={uid}): {e}")
+            await msg.reply_text(
+                "❌ Xato yuz berdi. Qayta urinib ko'ring.",
+                reply_markup=_role_keyboard(lavozim),
+            )
+    except Exception as e:
+        logger.error(f"Buferlangan xabar yuborishda xato (uid={uid}): {e}")
+        await msg.reply_text(
+            "❌ Xato yuz berdi. Qayta urinib ko'ring.",
+            reply_markup=_role_keyboard(lavozim),
+        )
 
 
 def admin_only(func):
@@ -416,16 +524,11 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if await db.is_admin(uid):
         return
 
-    # Flood himoya
-    if rate_limited(uid):
-        return
-
     # Ro'yxatdan o'tish, klient yoki so'rov oqimida bo'lsa o'tkazib yuborish
     if any(k in context.user_data for k in ("ism", "lavozim", "kod", "filial", "klient_data", "sorov_data", "limit_data")):
         return
 
     user = await db.get_xodim(uid)
-
     if not user:
         await msg.reply_text("❌ Siz ro'yxatdan o'tmagansiz. Botni boshlash uchun /start bosing.")
         return
@@ -438,6 +541,33 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await msg.reply_text("⏳ Profilingiz tasdiqlanishini kuting.")
         return
 
+    # ── "📤 Yuborish" tugmasi bosildi — bufer yuboriladi ─────────
+    if msg.text == _YUBORISH_BTN:
+        buf = context.user_data.pop("msg_buffer", [])
+        if not buf:
+            await msg.reply_text("❌ Yuborish uchun xabar yo'q.", reply_markup=_role_keyboard(lavozim))
+            return
+        await _send_buffered(context, msg, uid, ism, lavozim, filial, topic_id, buf)
+        return
+
+    # ── Flood himoya ──────────────────────────────────────────────
+    if rate_limited(uid):
+        return
+
+    # ── Matn xabarlarni buferlash ─────────────────────────────────
+    if msg.text:
+        buf = context.user_data.setdefault("msg_buffer", [])
+        buf.append(msg.text)
+        if len(buf) == 1:
+            await msg.reply_text(
+                "✅ Xabar qo'shildi. Yana qo'shishingiz mumkin yoki \"📤 Yuborish\" tugmasini bosing:",
+                reply_markup=_yuborish_kb(),
+            )
+        else:
+            await msg.reply_text(f"✅ {len(buf)}-xabar qo'shildi.")
+        return
+
+    # ── Non-text xabarlar: mavjud oqim ───────────────────────────
     if msg.photo:        ctype = "📷 Rasm"
     elif msg.video:      ctype = "🎥 Video"
     elif msg.document:   ctype = "📄 Fayl"
@@ -467,26 +597,6 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except BadRequest:
                 pass
         return await msg.forward(chat_id=GROUP_CHAT_ID, message_thread_id=t_id)
-
-    async def _log(group_id: int):
-        """General topicga sukut bilan log yozadi (faqat admin uchun)."""
-        role_txt   = f"{lavozim} ({kod})" if kod and kod != "KOD YO'Q" else lavozim
-        topic_name = f"{ism} — {role_txt} | {filial}"
-        now_str    = datetime.now().strftime("%d.%m %H:%M")
-        if msg.text:
-            content = msg.text[:100] + ("..." if len(msg.text) > 100 else "")
-        else:
-            content = ctype
-        log_text = f"[{topic_name}] {ism}: {content} — {now_str}"
-        try:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=log_text,
-                disable_notification=True,   # sukut — hech qanday signal yo'q
-                protect_content=True,        # forward/screenshot oldini oladi
-            )
-        except Exception as e:
-            logger.warning(f"General topicga log yuborishda xato: {e}")
 
     if active:
         # ── Mavjud guruhga qo'shish — faqat DB ga yoziladi ──────
@@ -521,7 +631,6 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             checker_id = await db.get_biriktirish(uid) if lavozim == "Agent" else None
 
             if checker_id:
-                # Urgency tanlash so'rash — checker xabari urgency tanlanganida ketadi
                 try:
                     await context.bot.send_message(
                         chat_id=uid,
@@ -531,14 +640,12 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     )
                 except Exception:
                     pass
-                # 60 soniyada urgency tanlanmasa — oddiy deb checker ga yuborish
                 context.job_queue.run_once(
                     urgency_timeout_job,
                     when=URGENCY_TIMEOUT_SEC,
                     data={"group_id": group_id, "checker_id": checker_id, "ism": ism},
                     name=f"urgency_{group_id}",
                 )
-                # Checker timeout (30 daqiqada javob bermasa admin ogohlantiriladi)
                 context.job_queue.run_once(
                     checker_timeout_job,
                     when=CHECKER_TIMEOUT_SEC,
@@ -547,7 +654,6 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 )
             else:
                 _schedule_sla(context, group_id, ism)
-                # Feature 10: Checker yo'q bo'lsa adminga maxsus xabar
                 if lavozim == "Agent":
                     try:
                         await context.bot.send_message(

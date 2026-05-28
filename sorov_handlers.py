@@ -1021,25 +1021,9 @@ async def limit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def limit_dokon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["limit_data"]["dokon_nomi"] = update.message.text.strip()
-    uid = update.effective_user.id
-
-    stores = await db.get_klientlar_by_supervisor(uid)
-    limit_lines = ""
-    if stores:
-        limit_lines = "\n\n📊 *Hozirgi limitlar:*\n"
-        for s in stores:
-            firma = s[2]   # firma_nomi
-            lim   = s[15]  # limit_summa
-            if lim:
-                formatted = f"{int(lim):,}"
-                limit_lines += f"• {firma}: {formatted}\n"
-            else:
-                limit_lines += f"• {firma}: —\n"
-
     await update.message.reply_text(
-        f"💰 Limitlarni quyidagi formatda yozing:\n\n"
-        f"`Dusel: 1000000`\n`Ockean: 500000`\n\n"
-        f"Har bir proyekt alohida qatorda.{limit_lines}",
+        "💰 Yangi limitni yozing:\n\n"
+        "_Masalan: Dusel: 1000000_",
         parse_mode="Markdown",
     )
     return LIMIT_SUMMA

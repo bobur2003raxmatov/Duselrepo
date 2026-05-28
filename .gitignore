@@ -5,3 +5,6 @@ __pycache__/
 *.xlsx
 .env
 bot.log
+bot_run.log
+bot.pid
+bot_persistence.pkl

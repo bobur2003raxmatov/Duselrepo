@@ -1,6 +1,9 @@
 import logging
 import datetime
 import warnings
+import sys
+import os
+import fcntl
 
 from telegram import BotCommand, ChatPermissions, Update
 
@@ -14,12 +17,11 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     MessageReactionHandler,
-    PicklePersistence,
     filters,
 )
 
 from config import (
-    TOKEN, GROUP_CHAT_ID,
+    TOKEN, GROUP_CHAT_ID, WEBHOOK_URL, PORT,
     ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN,
     XODIM_LIST, EDIT_FIELD, EDIT_VALUE, SEARCH_QUERY,
     BIRIKTIR_AGENT, BIRIKTIR_CHECKER, BIRIKTIR_DETAIL,
@@ -81,14 +83,14 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[
         logging.FileHandler("bot.log", encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
     ],
 )
 logger = logging.getLogger(__name__)
 
 
 def build_application() -> Application:
-    persistence = PicklePersistence(filepath="bot_persistence.pkl")
-    app = Application.builder().token(TOKEN).persistence(persistence).build()
+    app = Application.builder().token(TOKEN).build()
 
     start_cmd = CommandHandler("start", start)
 
@@ -367,14 +369,35 @@ async def error_handler(update: object, context) -> None:
 
 
 def main():
+    # Bir vaqtda faqat bitta instance ishlashi uchun PID lock
+    _pid_file = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.pid"), "w")
+    try:
+        fcntl.flock(_pid_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        logger.error("Bot allaqachon ishlamoqda! Ikkinchi instance ishga tushmaydi.")
+        sys.exit(1)
+
     logger.info("🚀 Dusel Company boti ishga tushmoqda...")
     app = build_application()
     app.post_init = post_init
     app.add_error_handler(error_handler)
-    app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-    )
+
+    if WEBHOOK_URL:
+        logger.info(f"🌐 Webhook rejimi: {WEBHOOK_URL}  port={PORT}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+    else:
+        logger.info("🔄 Polling rejimi (lokalda ishlatish uchun)")
+        app.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
 
 
 if __name__ == "__main__":

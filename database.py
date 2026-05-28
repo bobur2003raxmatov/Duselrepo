@@ -308,6 +308,9 @@ async def init_db():
             except Exception:
                 pass
 
+    # Admin keshini ishga tushirishda to'ldirish
+    await _reload_admin_cache()
+
 
 # ── DB versiyasi ─────────────────────────────────────────────────
 async def get_db_version() -> int:
@@ -324,19 +327,28 @@ async def set_db_version(version: int) -> None:
         await db.commit()
 
 
-# ── Adminlar ─────────────────────────────────────────────────────
-async def get_admins() -> list[int]:
+# ── Adminlar (xotirada kesh — har bir xabar uchun DB ga bormaslik) ─
+_admin_cache: set[int] = set()
+
+
+async def _reload_admin_cache() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT user_id FROM admins") as cur:
-            return [r[0] for r in await cur.fetchall()]
+            rows = await cur.fetchall()
+    _admin_cache.clear()
+    _admin_cache.update(r[0] for r in rows)
+
+
+async def get_admins() -> list[int]:
+    if not _admin_cache:
+        await _reload_admin_cache()
+    return list(_admin_cache)
 
 
 async def is_admin(user_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT 1 FROM admins WHERE user_id=?", (user_id,)
-        ) as cur:
-            return await cur.fetchone() is not None
+    if not _admin_cache:
+        await _reload_admin_cache()
+    return user_id in _admin_cache
 
 
 async def add_admin(user_id: int) -> None:
@@ -345,6 +357,7 @@ async def add_admin(user_id: int) -> None:
             "INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,)
         )
         await db.commit()
+    _admin_cache.add(user_id)
 
 
 async def remove_admin(user_id: int) -> None:
@@ -353,6 +366,7 @@ async def remove_admin(user_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
         await db.commit()
+    _admin_cache.discard(user_id)
 
 
 # ── Xodim ────────────────────────────────────────────────────────

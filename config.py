@@ -9,6 +9,11 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "7839267271"))
 GROUP_CHAT_ID = -1003802115020
 DB_PATH       = os.environ.get("DB_PATH", "dusel_company.db")
 
+# Webhook rejimi: WEBHOOK_URL o'rnatilsa webhook, aks holda polling
+# Masalan: https://yourapp.railway.app
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+PORT        = int(os.environ.get("PORT", "8443"))
+
 FILIALLAR = [
     "Namangan Tools", "Navoiy Tools", "Qashqadaryo Tools", "Samarqand Tools",
     "Test Filial",    "Xorazasp",     "Andijon",            "Buxoro",
