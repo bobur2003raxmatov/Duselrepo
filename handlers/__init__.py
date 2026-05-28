@@ -60,4 +60,8 @@ from handlers._core import (
 
     # Admin klientlar
     admin_klientlar, klient_reject_reason,
+
+    # Topic o'chirilish va DB yuklash
+    topic_closed_handler,
+    admin_download_db,
 )
