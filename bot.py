@@ -24,6 +24,7 @@ import fcntl
 print("stdlib imported OK", flush=True)
 
 from telegram import BotCommand, ChatPermissions, Update
+from telegram.ext import PicklePersistence
 from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=PTBUserWarning)
 from telegram.ext import (
@@ -58,7 +59,7 @@ print("config imported OK", flush=True)
 from database import init_db
 print("database imported OK", flush=True)
 
-from utils import daily_report_job, weekly_report_job, agent_reminder_job
+from utils import daily_report_job, weekly_report_job, agent_reminder_job, pending_sorovlar_alert_job
 print("utils imported OK", flush=True)
 
 from handlers import (
@@ -91,7 +92,7 @@ from handlers import (
     admin_tarix, tarix_filter_callback,
     topic_closed_handler,
     admin_upload_db,
-    add_admin_command, add_admin_id_receive,
+    add_admin_command, add_admin_id_receive, admin_mgmt_callback,
     instruksiya_cmd,
     admin_instruksiya_lavozim_cb,
     admin_instruksiya_edit_cb,
@@ -112,11 +113,12 @@ print("sorov_handlers imported OK", flush=True)
 print("=== ALL IMPORTS DONE ===", flush=True)
 
 # ── Logging: console + file ───────────────────────────────────────
+from logging.handlers import RotatingFileHandler
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     level=logging.INFO,
     handlers=[
-        logging.FileHandler("bot.log", encoding="utf-8"),
+        RotatingFileHandler("bot.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
@@ -124,7 +126,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_application() -> Application:
-    app = Application.builder().token(TOKEN).build()
+    persistence = PicklePersistence(filepath="bot_persistence.pkl")
+    app = Application.builder().token(TOKEN).persistence(persistence).build()
 
     start_cmd = CommandHandler("start", start)
 
@@ -308,7 +311,10 @@ def build_application() -> Application:
     add_admin_conv = ConversationHandler(
         entry_points=[CommandHandler("add_admin", add_admin_command)],
         states={
-            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id_receive)],
+            ADD_ADMIN_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id_receive),
+                CallbackQueryHandler(admin_mgmt_callback, pattern="^admin_rm_|^admin_add$|^admin_noop$"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
@@ -317,9 +323,8 @@ def build_application() -> Application:
     app.add_handler(add_admin_conv)
 
     app.add_handler(CommandHandler("upload_db",   admin_upload_db))
-    from config import ADMIN_ID
     app.add_handler(MessageHandler(
-        filters.Document.FileExtension("db") & filters.Chat(ADMIN_ID),
+        filters.Document.FileExtension("db"),
         admin_upload_db,
     ))
     app.add_handler(CommandHandler("klientlar",  admin_klientlar))
@@ -331,7 +336,7 @@ def build_application() -> Application:
         topic_closed_handler,
     ))
 
-    app.add_handler(CallbackQueryHandler(sorov_sup_callback, pattern=r"^sorov_appr_|^sorov_rej_"))
+    app.add_handler(CallbackQueryHandler(sorov_sup_callback, pattern=r"^sorov_appr_|^sorov_rej_|^sorov_done_|^sorov_rad_"))
     app.add_handler(CallbackQueryHandler(tarix_filter_callback, pattern=r"^tarix_f_"))
     app.add_handler(CallbackQueryHandler(batch_callback, pattern=r"^batch_"))
     app.add_handler(CallbackQueryHandler(callback_handler))
@@ -342,7 +347,7 @@ def build_application() -> Application:
     # TEXT cheklovi yo'q — admin foto/video reply ham xodimga yo'naltiriladi
     app.add_handler(
         MessageHandler(
-            filters.User(ADMIN_ID) & ~filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND,
+            ~filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND,
             klient_reject_reason,
         ),
         group=1,
@@ -413,6 +418,13 @@ async def post_init(app: Application):
         time=datetime.time(hour=17, minute=0, tzinfo=tz_uz),
     )
     logger.info("✅ Agent eslatmasi rejalashtirildi: 17:00 (UTC+5)")
+
+    app.job_queue.run_repeating(
+        pending_sorovlar_alert_job,
+        interval=300,
+        first=300,
+    )
+    logger.info("✅ Kutilayotgan so'rovlar tekshiruvi rejalashtirildi: har 5 daqiqa")
 
 
 async def error_handler(update: object, context) -> None:

@@ -7,6 +7,8 @@ from config import DB_PATH, GROUP_TIMEOUT_SEC, ADMIN_ID
 @asynccontextmanager
 async def get_db():
     async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA synchronous=NORMAL")
         yield conn
 
 
@@ -324,6 +326,20 @@ async def init_db():
             except Exception:
                 pass
 
+        # Performance indexes (idempotent — IF NOT EXISTS)
+        await db.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_sorovlar_status        ON sorovlar(status);
+            CREATE INDEX IF NOT EXISTS idx_sorovlar_agent_id      ON sorovlar(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_sorovlar_supervisor_id ON sorovlar(supervisor_id);
+            CREATE INDEX IF NOT EXISTS idx_xodimlar_status        ON xodimlar(status);
+            CREATE INDEX IF NOT EXISTS idx_xodimlar_lavozim       ON xodimlar(lavozim);
+            CREATE INDEX IF NOT EXISTS idx_xabar_guruhi_holat     ON xabar_guruhi(holat);
+            CREATE INDEX IF NOT EXISTS idx_xabarlar_user_id       ON xabarlar(user_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_user_id      ON audit_log(user_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_created_at   ON audit_log(created_at);
+        """)
+        await db.commit()
+
     # Admin keshini ishga tushirishda to'ldirish
     await _reload_admin_cache()
 
@@ -421,7 +437,10 @@ async def approve_xodim(user_id: int, topic_id: int):
 
 async def reject_xodim(user_id: int):
     async with get_db() as db:
-        await db.execute("DELETE FROM xodimlar WHERE user_id=?", (user_id,))
+        await db.execute(
+            "UPDATE xodimlar SET status='rejected' WHERE user_id=?",
+            (user_id,)
+        )
         await db.commit()
 
 
@@ -581,6 +600,27 @@ async def get_pending_xodimlar() -> list:
             "SELECT user_id, ism, lavozim, kod, filial FROM xodimlar WHERE status='pending'"
         ) as cur:
             return await cur.fetchall()
+
+
+async def get_pending_sorovlar_count() -> int:
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM sorovlar WHERE status='pending_supervisor'"
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def get_pending_sorovlar_by_supervisor() -> dict[int, int]:
+    """Returns {supervisor_id: count} for all pending_supervisor sorovlar."""
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT supervisor_id, COUNT(*) FROM sorovlar "
+            "WHERE status='pending_supervisor' AND supervisor_id IS NOT NULL "
+            "GROUP BY supervisor_id"
+        ) as cur:
+            rows = await cur.fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 async def get_blocked_xodimlar() -> list:

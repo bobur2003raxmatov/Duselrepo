@@ -151,65 +151,62 @@ async def _send_buffered(
     now_str = datetime.now().strftime("%H:%M")
 
     # Header matni: ism, filial, vaqt + matnlar + lokatsiya koordinatalari
-    info_lines = [
+    caption_parts = [
         f"📬 *So'rov #{group_id}*",
         f"👤 {em(ism)} | 🏢 {em(filial)} | 🕐 {now_str}",
     ]
     for t in text_items:
-        info_lines.append(f"\n💬 {em(t.get('text', ''))}")
+        caption_parts.append(f"\n💬 {em(t.get('text', ''))}")
     for l in loc_items:
-        info_lines.append(f"📍 `{l['lat']:.6f}, {l['lon']:.6f}`")
-    info_text = "\n".join(info_lines)
+        caption_parts.append(f"📍 `{l['lon']:.6f}; {l['lat']:.6f}`")
+    info_text = "\n".join(caption_parts)
+    # Caption max 1024 chars for media; truncate if needed
+    caption_for_media = info_text if len(info_text) <= 1024 else info_text[:1021] + "..."
 
     async def _post_to_group():
-        # 1. Header (matn + koordinatalar, tugmasiz)
-        await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            message_thread_id=topic_id,
-            text=info_text,
-            parse_mode="Markdown",
-        )
-        # 2. Lokatsiya pinlari (xarita)
-        for l in loc_items:
-            await context.bot.send_location(
-                chat_id=GROUP_CHAT_ID,
-                message_thread_id=topic_id,
-                latitude=l["lat"],
-                longitude=l["lon"],
-            )
-        # 3. Barcha foto/video
+        # 1. Media group with combined caption, OR text-only message
         if media_items:
             if len(media_items) == 1:
-                # Bitta media: to'g'ridan yuborish (send_media_group min 2 talab qiladi)
                 b = media_items[0]
                 if b["type"] == "photo":
                     await context.bot.send_photo(
                         chat_id=GROUP_CHAT_ID,
                         message_thread_id=topic_id,
                         photo=b["file_id"],
+                        caption=caption_for_media,
+                        parse_mode="Markdown",
                     )
                 else:
                     await context.bot.send_video(
                         chat_id=GROUP_CHAT_ID,
                         message_thread_id=topic_id,
                         video=b["file_id"],
+                        caption=caption_for_media,
+                        parse_mode="Markdown",
                     )
             else:
                 media_group = []
-                for b in media_items:
+                for i, b in enumerate(media_items):
+                    cap = caption_for_media if i == 0 else None
+                    pm  = "Markdown" if cap else None
                     if b["type"] == "photo":
-                        media_group.append(InputMediaPhoto(media=b["file_id"], caption=b.get("caption") or ""))
+                        media_group.append(InputMediaPhoto(media=b["file_id"], caption=cap, parse_mode=pm))
                     else:
-                        media_group.append(InputMediaVideo(media=b["file_id"], caption=b.get("caption") or ""))
-                for j in range(1, len(media_group)):
-                    media_group[j] = type(media_group[j])(media=media_group[j].media, caption="")
+                        media_group.append(InputMediaVideo(media=b["file_id"], caption=cap, parse_mode=pm))
                 for chunk in range(0, len(media_group), 10):
                     await context.bot.send_media_group(
                         chat_id=GROUP_CHAT_ID,
                         message_thread_id=topic_id,
                         media=media_group[chunk:chunk + 10],
                     )
-        # 4. Boshqa xabarlar (ovoz, stiker, fayl, ...)
+        else:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=topic_id,
+                text=info_text,
+                parse_mode="Markdown",
+            )
+        # 2. Boshqa xabarlar (ovoz, stiker, fayl, ...)
         for item in other_items:
             await context.bot.copy_message(
                 chat_id=GROUP_CHAT_ID,
@@ -217,7 +214,7 @@ async def _send_buffered(
                 message_id=item["msg_id"],
                 message_thread_id=topic_id,
             )
-        # 5. Footer — amal tugmalari (eng pastda)
+        # 4. Footer — amal tugmalari (eng pastda)
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=topic_id,
@@ -680,7 +677,7 @@ async def reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_rx = rxn.new_reaction  # List[ReactionType]
 
     # ── Admin guruhda reaksiya → xodimga mirror ──────────────────
-    if cid == GROUP_CHAT_ID and uid == ADMIN_ID:
+    if cid == GROUP_CHAT_ID and await db.is_admin(uid):
         xabar = await db.get_xabar_by_group_fwd_id(msg_id)
         if not xabar:
             return
@@ -717,7 +714,7 @@ async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.message_thread_id:
         return
-    if msg.chat.id != GROUP_CHAT_ID or update.effective_user.id != ADMIN_ID:
+    if msg.chat.id != GROUP_CHAT_ID or not await db.is_admin(update.effective_user.id):
         return
 
     row = await db.get_xodim_by_topic(msg.message_thread_id)
@@ -1166,7 +1163,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Agent ga rad xabari yuborishda xato: {e}")
         return
 
-    if query.from_user.id != ADMIN_ID:
+    if not await db.is_admin(query.from_user.id):
         return
 
     if data.startswith("xodim_profil_"):
@@ -1524,10 +1521,19 @@ async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not await db.is_admin(uid):
         return ConversationHandler.END
+    from config import ADMIN_ID as _MAIN
+    from keyboards import admins_mgmt_kb
+    admins = await db.get_admins()
+    lines = ["👑 *Admin boshqaruvi*\n"]
+    for aid in admins:
+        row = await db.get_xodim(aid)
+        ism = row[2] if row else str(aid)
+        badge = " *(Asosiy)*" if aid == _MAIN else ""
+        lines.append(f"• {em(ism)} — `{aid}`{badge}")
     await update.message.reply_text(
-        "➕ *Admin qo'shish*\n\nYangi adminning *User ID* sini yuboring:\n\n"
-        "💡 User ID ni bilish uchun @userinfobot ga `/start` yuboring.",
+        "\n".join(lines),
         parse_mode="Markdown",
+        reply_markup=admins_mgmt_kb(admins, _MAIN),
     )
     return ADD_ADMIN_ID
 
@@ -1546,11 +1552,69 @@ async def add_admin_id_receive(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
     await db.add_admin(new_id)
     await update.message.reply_text(
-        f"✅ `{new_id}` admin sifatida qo'shildi.\nU `/start` bosishi kerak.",
-        parse_mode="Markdown",
+        f"✅ `{new_id}` admin sifatida qo'shildi\\. U `/start` bosishi kerak\\.",
+        parse_mode="MarkdownV2",
         reply_markup=admin_kb(),
     )
+    try:
+        await context.bot.send_message(
+            chat_id=new_id,
+            text="🎉 Siz admin sifatida qo'shildingiz\\! /start bosing\\.",
+            parse_mode="MarkdownV2",
+        )
+    except Exception:
+        pass
     return ConversationHandler.END
+
+
+async def admin_mgmt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import ADMIN_ID as _MAIN
+    from keyboards import admins_mgmt_kb
+    query = update.callback_query
+    await query.answer()
+    if not await db.is_admin(query.from_user.id):
+        return ConversationHandler.END
+
+    if query.data == "admin_noop":
+        return ADD_ADMIN_ID
+
+    if query.data == "admin_add":
+        await query.edit_message_text(
+            "➕ *Yangi admin qo'shish*\n\nYangi adminning *User ID* sini yuboring:\n\n"
+            "💡 @userinfobot ga /start yuboring — User ID topasiz.",
+            parse_mode="Markdown",
+        )
+        return ADD_ADMIN_ID
+
+    if query.data.startswith("admin_rm_"):
+        try:
+            target_id = int(query.data[len("admin_rm_"):])
+        except ValueError:
+            await query.answer("❌ Noto'g'ri ID.", show_alert=True)
+            return ADD_ADMIN_ID
+        if target_id == _MAIN:
+            await query.answer("Asosiy adminni chiqarib bo'lmaydi!", show_alert=True)
+            return ADD_ADMIN_ID
+        await db.remove_admin(target_id)
+        admins = await db.get_admins()
+        lines = ["👑 *Admin boshqaruvi*\n"]
+        for aid in admins:
+            row = await db.get_xodim(aid)
+            ism = row[2] if row else str(aid)
+            badge = " *(Asosiy)*" if aid == _MAIN else ""
+            lines.append(f"• {em(ism)} — `{aid}`{badge}")
+        try:
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                reply_markup=admins_mgmt_kb(admins, _MAIN),
+            )
+        except Exception:
+            pass
+        await query.answer(f"✅ {target_id} adminlikdan chiqarildi.", show_alert=True)
+        return ADD_ADMIN_ID
+
+    return ADD_ADMIN_ID
 
 
 async def instruksiya_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1851,7 +1915,7 @@ async def admin_tarix(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def tarix_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.from_user.id != ADMIN_ID:
+    if not await db.is_admin(query.from_user.id):
         return
     parts = query.data.split("_", 2)  # tarix_f_<filter>
     filter_type = parts[2] if len(parts) == 3 else "all"
@@ -2911,7 +2975,7 @@ async def klient_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Klientni rad etish, klient qidirish, sorov javobini yuborish va admin private reply."""
-    if update.effective_user.id != ADMIN_ID:
+    if not await db.is_admin(update.effective_user.id):
         return
 
     msg = update.message

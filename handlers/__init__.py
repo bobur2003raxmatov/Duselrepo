@@ -61,7 +61,7 @@ from handlers._core import (
     # Topic o'chirilish va DB boshqaruvi
     topic_closed_handler,
     admin_upload_db,
-    add_admin_command, add_admin_id_receive,
+    add_admin_command, add_admin_id_receive, admin_mgmt_callback,
 
     # Instruksiya
     instruksiya_cmd,

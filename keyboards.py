@@ -612,6 +612,27 @@ def klient_approval_kb(klient_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+def sorov_action_inline(sorov_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Bajarildi",  callback_data=f"sorov_done_{sorov_id}"),
+        InlineKeyboardButton("❌ Rad etildi", callback_data=f"sorov_rad_{sorov_id}"),
+    ]])
+
+
+def admins_mgmt_kb(admins: list, main_admin_id: int) -> InlineKeyboardMarkup:
+    buttons = []
+    for aid in admins:
+        if aid == main_admin_id:
+            buttons.append([InlineKeyboardButton(f"👑 {aid} (Asosiy)", callback_data="admin_noop")])
+        else:
+            buttons.append([
+                InlineKeyboardButton(f"👤 {aid}", callback_data="admin_noop"),
+                InlineKeyboardButton("❌ Chiqarish", callback_data=f"admin_rm_{aid}"),
+            ])
+    buttons.append([InlineKeyboardButton("➕ Yangi admin qo'shish", callback_data="admin_add")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def mening_klientlar_kb(rows: list, page: int, page_size: int = 5) -> InlineKeyboardMarkup:
     total = len(rows)
     total_pages = max(1, (total + page_size - 1) // page_size)

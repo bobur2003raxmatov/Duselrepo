@@ -281,6 +281,25 @@ async def generate_full_excel(data: dict) -> str:
     return filename
 
 
+async def pending_sorovlar_alert_job(context: ContextTypes.DEFAULT_TYPE):
+    from database import get_pending_sorovlar_by_supervisor
+    sup_counts = await get_pending_sorovlar_by_supervisor()
+    if not sup_counts:
+        return
+    for sup_id, count in sup_counts.items():
+        try:
+            await context.bot.send_message(
+                chat_id=sup_id,
+                text=(
+                    f"⏰ *{count} ta so'rov tasdiqlanishingizni kutmoqda\\!*\n"
+                    "_Agentlar tomonidan yuborilgan va hali tasdiqlanmagan so'rovlar\\._"
+                ),
+                parse_mode="MarkdownV2",
+            )
+        except Exception as e:
+            logger.warning(f"Pending sorov alert xato (supervisor={sup_id}): {e}")
+
+
 async def generate_klientlar_excel(rows: list) -> str:
     suffix = f"_Ochilgan_Klientlar_{datetime.now().strftime('%d_%m_%Y')}.xlsx"
     fd, filename = tempfile.mkstemp(suffix=suffix)
