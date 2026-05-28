@@ -276,7 +276,7 @@ def build_application() -> Application:
         filters.Document.FileExtension("db") & filters.Chat(ADMIN_ID),
         admin_upload_db,
     ))
-    app.add_handler(MessageHandler(filters.Regex(r"^🏪 Klientlar$"),              admin_klientlar))
+    app.add_handler(CommandHandler("klientlar",  admin_klientlar))
     app.add_handler(MessageReactionHandler(reaction_handler))
 
     # Topic o'chirilganda xodimni bazadan o'chirish
@@ -324,6 +324,7 @@ async def post_init(app: Application):
         [
             BotCommand("start",       "Botni qayta ishga tushirish"),
             BotCommand("new_client",  "Yangi klient registratsiyasi"),
+            BotCommand("klientlar",   "Klientlar ro'yxati"),
         ],
         scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
     )

@@ -121,7 +121,6 @@ def admin_kb() -> ReplyKeyboardMarkup:
             ["📊 Statistika",              "👥 Xodimlar"],
             ["⏳ Kutilayotgan so'rovlar",  "🚫 Bloklanganlar"],
             ["📥 Excel",                   "🔗 Biriktirish"],
-            ["🏪 Yangi Klient",            "🏪 Klientlar"],
             ["🏆 Reyting",                 "📋 Tarix"],
         ],
         resize_keyboard=True,
