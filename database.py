@@ -1,4 +1,5 @@
 import os
+import asyncio
 import aiosqlite
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -23,14 +24,17 @@ class _TursoCursor:
 
 
 class _TursoExecCtx:
-    """Awaitable + async context manager — matches aiosqlite's execute() return."""
+    """Awaitable + async context manager — matches aiosqlite's execute() return.
+    libsql-experimental is sync — we run it in a thread to avoid blocking."""
     def __init__(self, conn, sql, params):
         self._conn   = conn
         self._sql    = sql
         self._params = list(params) if params else []
 
     async def _run(self):
-        rs = await self._conn.execute(self._sql, self._params)
+        rs = await asyncio.to_thread(
+            self._conn.execute, self._sql, self._params
+        )
         rows    = getattr(rs, "rows", []) or []
         last_id = getattr(rs, "last_insert_rowid", None)
         return _TursoCursor(rows, last_id)
@@ -55,10 +59,12 @@ class _TursoConn:
         return _TursoExecCtx(self._c, sql, params or [])
 
     async def executemany(self, sql, seq):
-        await self._c.executemany(sql, [list(p) for p in seq])
+        await asyncio.to_thread(
+            self._c.executemany, sql, [list(p) for p in seq]
+        )
 
     async def commit(self):
-        await self._c.commit()
+        await asyncio.to_thread(self._c.commit)
 
 
 @asynccontextmanager
@@ -67,10 +73,10 @@ async def get_db():
     if _TURSO_URL:
         if _turso_conn is None:
             import libsql_experimental as libsql
-            _turso_conn = await libsql.connect(_TURSO_URL, auth_token=_TURSO_TOKEN)
+            _turso_conn = libsql.connect(_TURSO_URL, auth_token=_TURSO_TOKEN)
         yield _TursoConn(_turso_conn)
     else:
-        async with get_db() as conn:
+        async with aiosqlite.connect(DB_PATH) as conn:
             yield conn
 
 
