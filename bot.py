@@ -14,16 +14,18 @@ if not os.environ.get("TOKEN"):
     sys.exit(1)
 # ───────────────────────────────────────────────────────────────────
 
+print("=== STARTING IMPORTS ===", flush=True)
+
+import traceback
 import logging
 import datetime
 import warnings
 import fcntl
+print("stdlib imported OK", flush=True)
 
 from telegram import BotCommand, ChatPermissions, Update
-
 from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=PTBUserWarning)
-
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -33,6 +35,7 @@ from telegram.ext import (
     MessageReactionHandler,
     filters,
 )
+print("telegram imported OK", flush=True)
 
 from config import (
     TOKEN, GROUP_CHAT_ID, WEBHOOK_URL, PORT,
@@ -50,8 +53,14 @@ from config import (
     LIMIT_DOKON, LIMIT_SUMMA,
     INSTR_MATN,
 )
+print("config imported OK", flush=True)
+
 from database import init_db
+print("database imported OK", flush=True)
+
 from utils import daily_report_job, weekly_report_job, agent_reminder_job
+print("utils imported OK", flush=True)
+
 from handlers import (
     reaction_handler,
     start,
@@ -88,6 +97,8 @@ from handlers import (
     admin_instruksiya_lavozim_cb,
     admin_instruksiya_matn_save,
 )
+print("handlers imported OK", flush=True)
+
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
     sorov_dokon_olish, sorov_dokon_foto_olish, sorov_lok_olish, sorov_tel_olish,
@@ -96,6 +107,8 @@ from sorov_handlers import (
     sorov_sup_callback,
     limit_start, limit_dokon_olish, limit_summa_olish,
 )
+print("sorov_handlers imported OK", flush=True)
+print("=== ALL IMPORTS DONE ===", flush=True)
 
 # ── Logging: console + file ───────────────────────────────────────
 logging.basicConfig(
@@ -453,9 +466,10 @@ def main():
 
 if __name__ == "__main__":
     try:
+        print("=== CALLING main() ===", flush=True)
         main()
     except Exception as exc:
-        print(f"FATAL: bot crashed at startup: {exc}", flush=True)
-        import traceback
-        traceback.print_exc()
+        print(f"CRITICAL ERROR: {exc}", flush=True)
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
         sys.exit(1)
