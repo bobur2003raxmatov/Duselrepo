@@ -1614,33 +1614,6 @@ async def admin_excel_eksport(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-async def admin_download_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin uchun: SQLite bazani to'g'ridan-to'g'ri Telegram ga yuboradi."""
-    uid = update.effective_user.id
-    if not await db.is_admin(uid):
-        return
-
-    db_path = os.path.abspath(
-        os.environ.get("DB_PATH", "dusel_company.db")
-    )
-    if not os.path.exists(db_path):
-        await update.message.reply_text("❌ Baza fayli topilmadi.")
-        return
-
-    size_mb = os.path.getsize(db_path) / (1024 * 1024)
-    filename = f"dusel_company_{datetime.now().strftime('%d_%m_%Y_%H%M')}.db"
-    try:
-        await update.message.reply_document(
-            document=open(db_path, "rb"),
-            filename=filename,
-            caption=f"🗄 SQLite baza • {size_mb:.2f} MB\n_DB Browser for SQLite bilan oching_",
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        logger.error(f"DB yuborishda xato: {e}")
-        await update.message.reply_text(f"❌ Xato: {e}")
-
-
 async def admin_upload_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin uchun: yuborilgan .db faylni joriy bazaga almashtiradi."""
     uid = update.effective_user.id
