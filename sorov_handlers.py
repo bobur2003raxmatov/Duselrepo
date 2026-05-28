@@ -1261,10 +1261,14 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if action == "sorov_appr":
         try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        try:
             await db.update_sorov_status(sorov_id, "approved")
         except Exception as _e:
             logger.error(f"[APPR] DB status update xato: {_e}")
-            await query.edit_message_text("❌ DB xato. Admin bilan bog'laning.")
+            await query.answer("❌ DB xato. Admin bilan bog'laning.", show_alert=True)
             return
 
         try:
@@ -1338,6 +1342,10 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
 
     else:  # sorov_rej
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         await db.update_sorov_status(sorov_id, "rejected")
 
         try:
