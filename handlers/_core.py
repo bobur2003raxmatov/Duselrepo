@@ -1614,6 +1614,28 @@ async def admin_excel_eksport(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await db.is_admin(uid):
+        return
+    args = context.args
+    if not args or not args[0].lstrip("-").isdigit():
+        await update.message.reply_text(
+            "➕ *Admin qo'shish*\n\nFoydalanish: `/add_admin <user_id>`\n\nMisol: `/add_admin 123456789`",
+            parse_mode="Markdown",
+        )
+        return
+    new_id = int(args[0])
+    if await db.is_admin(new_id):
+        await update.message.reply_text(f"⚠️ `{new_id}` allaqachon admin.", parse_mode="Markdown")
+        return
+    await db.add_admin(new_id)
+    await update.message.reply_text(
+        f"✅ `{new_id}` admin sifatida qo'shildi.\nU `/start` bosishi kerak.",
+        parse_mode="Markdown",
+    )
+
+
 async def admin_upload_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin uchun: yuborilgan .db faylni joriy bazaga almashtiradi."""
     uid = update.effective_user.id

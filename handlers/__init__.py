@@ -64,4 +64,5 @@ from handlers._core import (
     # Topic o'chirilish va DB boshqaruvi
     topic_closed_handler,
     admin_upload_db,
+    add_admin_command,
 )

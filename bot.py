@@ -82,6 +82,7 @@ from handlers import (
     admin_tarix, tarix_filter_callback,
     topic_closed_handler,
     admin_upload_db,
+    add_admin_command,
 )
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
@@ -271,6 +272,7 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^🚫 Bloklanganlar$"),          admin_bloklanganlar))
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
     app.add_handler(CommandHandler("upload_db",   admin_upload_db))
+    app.add_handler(CommandHandler("add_admin",   add_admin_command))
     from config import ADMIN_ID
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("db") & filters.Chat(ADMIN_ID),
@@ -325,6 +327,7 @@ async def post_init(app: Application):
             BotCommand("start",       "Botni qayta ishga tushirish"),
             BotCommand("new_client",  "Yangi klient registratsiyasi"),
             BotCommand("klientlar",   "Klientlar ro'yxati"),
+            BotCommand("add_admin",   "Yangi admin qo'shish"),
         ],
         scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
     )
