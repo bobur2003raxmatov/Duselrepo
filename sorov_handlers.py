@@ -950,13 +950,67 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
     sent_ok = False
     try:
         if lavozim == "Agent" and supervisor_id:
-            sent = await context.bot.send_message(
-                chat_id=supervisor_id, text=card,
-                parse_mode="MarkdownV2",
-                reply_markup=sorov_tasdiqlash_kb(sorov_id),
+            media_group = (
+                [InputMediaPhoto(fid) for fid in photos] +
+                [InputMediaVideo(fid) for fid in videos]
             )
-            await db.update_sorov_sup_msg_id(sorov_id, sent.message_id)
-            await _send_photos_and_media(supervisor_id)
+            sup_msg_id = None
+            if len(media_group) == 1:
+                # 1 ta media — caption bilan birga, tugmalar shu xabarda
+                if photos:
+                    sent = await context.bot.send_photo(
+                        chat_id=supervisor_id, photo=photos[0],
+                        caption=card, parse_mode="MarkdownV2",
+                        reply_markup=sorov_tasdiqlash_kb(sorov_id),
+                    )
+                else:
+                    sent = await context.bot.send_video(
+                        chat_id=supervisor_id, video=videos[0],
+                        caption=card, parse_mode="MarkdownV2",
+                        reply_markup=sorov_tasdiqlash_kb(sorov_id),
+                    )
+                sup_msg_id = sent.message_id
+            elif media_group:
+                # 2+ media — birinchi elementga caption, keyin tugmalar alohida
+                media_group[0] = (
+                    InputMediaPhoto(media_group[0].media, caption=card, parse_mode="MarkdownV2")
+                    if isinstance(media_group[0], InputMediaPhoto)
+                    else InputMediaVideo(media_group[0].media, caption=card, parse_mode="MarkdownV2")
+                )
+                for chunk_start in range(0, len(media_group), 10):
+                    await context.bot.send_media_group(
+                        chat_id=supervisor_id,
+                        media=media_group[chunk_start:chunk_start + 10],
+                    )
+                sent = await context.bot.send_message(
+                    chat_id=supervisor_id,
+                    text=f"⬇️ So'rov \\#{sorov_id} — amal tanlang:",
+                    parse_mode="MarkdownV2",
+                    reply_markup=sorov_tasdiqlash_kb(sorov_id),
+                )
+                sup_msg_id = sent.message_id
+            else:
+                # Rasm yo'q — oddiy matn xabar
+                sent = await context.bot.send_message(
+                    chat_id=supervisor_id, text=card,
+                    parse_mode="MarkdownV2",
+                    reply_markup=sorov_tasdiqlash_kb(sorov_id),
+                )
+                sup_msg_id = sent.message_id
+            # Fayllar va ovozlar alohida (media group qo'llab-quvvatlamaydi)
+            for f_info in files:
+                fid = f_info["file_id"] if isinstance(f_info, dict) else f_info
+                try:
+                    await context.bot.send_document(chat_id=supervisor_id, document=fid)
+                except Exception:
+                    pass
+            for fid in voices:
+                try:
+                    await context.bot.send_voice(chat_id=supervisor_id, voice=fid)
+                except Exception:
+                    pass
+            if sup_msg_id:
+                await db.update_sorov_sup_msg_id(sorov_id, sup_msg_id)
             sent_ok = True
         elif group_chat_id:
             await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=card, parse_mode="MarkdownV2", **thread_b)
