@@ -338,11 +338,11 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
 
-    # Klient reject reason — group 1 so it does not steal updates from group 0
-    # (admin_guruh_javob va xodim_chat_handler ishlashi uchun)
+    # Admin private handler (group 1): reply routing, klient rad, klient qidirish, sorov javob
+    # TEXT cheklovi yo'q — admin foto/video reply ham xodimga yo'naltiriladi
     app.add_handler(
         MessageHandler(
-            filters.User(ADMIN_ID) & ~filters.Chat(GROUP_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            filters.User(ADMIN_ID) & ~filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND,
             klient_reject_reason,
         ),
         group=1,

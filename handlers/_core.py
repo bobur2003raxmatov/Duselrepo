@@ -137,64 +137,90 @@ def _schedule_sla(context, group_id: int, ism: str):
 async def _send_buffered(
     context, msg, uid: int, ism: str, lavozim: str, filial: str, topic_id: int, buf: list
 ):
-    """Buferdagi barcha xabarlarni admin guruhiga yuboradi. Rasm/video media group sifatida."""
+    """Buferdagi barcha xabarlarni admin guruhiga yuboradi."""
     group_id = await db.create_xabar_guruhi(uid, ism, filial, topic_id)
     for entry in buf:
         await db.insert_xabar(uid, ism, filial, entry.get("ctype", "💬 Xabar"), entry["msg_id"], group_id)
 
+    # Turlari bo'yicha ajratish
+    text_items  = [b for b in buf if b["type"] == "text"]
+    loc_items   = [b for b in buf if b["type"] == "location"]
+    media_items = [b for b in buf if b["type"] in ("photo", "video")]
+    other_items = [b for b in buf if b["type"] == "other"]
+
+    now_str = datetime.now().strftime("%H:%M")
+
+    # Header matni: ism, filial, vaqt + matnlar + lokatsiya koordinatalari
+    info_lines = [
+        f"📬 *So'rov #{group_id}*",
+        f"👤 {em(ism)} | 🏢 {em(filial)} | 🕐 {now_str}",
+    ]
+    for t in text_items:
+        info_lines.append(f"\n💬 {em(t.get('text', ''))}")
+    for l in loc_items:
+        info_lines.append(f"📍 `{l['lat']:.6f}, {l['lon']:.6f}`")
+    info_text = "\n".join(info_lines)
+
     async def _post_to_group():
-        # Header kartasi
-        now_str = datetime.now().strftime("%H:%M")
+        # 1. Header (matn + koordinatalar, tugmasiz)
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=topic_id,
-            text=(
-                f"📬 *So'rov #{group_id}*\n"
-                f"👤 {em(ism)} | 🏢 {filial} | 🕐 {now_str}"
-            ),
+            text=info_text,
+            parse_mode="Markdown",
+        )
+        # 2. Lokatsiya pinlari (xarita)
+        for l in loc_items:
+            await context.bot.send_location(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=topic_id,
+                latitude=l["lat"],
+                longitude=l["lon"],
+            )
+        # 3. Barcha foto/video — bitta media group
+        if media_items:
+            media_group = []
+            for b in media_items:
+                if b["type"] == "photo":
+                    media_group.append(InputMediaPhoto(media=b["file_id"], caption=b.get("caption") or ""))
+                else:
+                    media_group.append(InputMediaVideo(media=b["file_id"], caption=b.get("caption") or ""))
+            for j in range(1, len(media_group)):
+                media_group[j] = type(media_group[j])(media=media_group[j].media, caption="")
+            for chunk in range(0, len(media_group), 10):
+                await context.bot.send_media_group(
+                    chat_id=GROUP_CHAT_ID,
+                    message_thread_id=topic_id,
+                    media=media_group[chunk:chunk + 10],
+                )
+        # 4. Boshqa xabarlar (ovoz, stiker, fayl, ...)
+        for item in other_items:
+            await context.bot.copy_message(
+                chat_id=GROUP_CHAT_ID,
+                from_chat_id=item["chat_id"],
+                message_id=item["msg_id"],
+                message_thread_id=topic_id,
+            )
+        # 5. Footer — amal tugmalari (eng pastda)
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            message_thread_id=topic_id,
+            text=f"⬇️ *#{group_id}* uchun amalni tanlang:",
             parse_mode="Markdown",
             reply_markup=group_sorov_inline(group_id),
         )
-        # Xabarlarni ketma-ket yuborish: rasm/video → media group
-        i = 0
-        while i < len(buf):
-            item = buf[i]
-            if item["type"] in ("photo", "video"):
-                # Ketma-ket media yig'ish
-                media_batch = []
-                while i < len(buf) and buf[i]["type"] in ("photo", "video"):
-                    b = buf[i]
-                    if b["type"] == "photo":
-                        media_batch.append(InputMediaPhoto(media=b["file_id"], caption=b.get("caption") or ""))
-                    else:
-                        media_batch.append(InputMediaVideo(media=b["file_id"], caption=b.get("caption") or ""))
-                    i += 1
-                # InputMedia caption faqat birinchisida bo'lsin
-                for j in range(1, len(media_batch)):
-                    media_batch[j] = type(media_batch[j])(media=media_batch[j].media, caption="")
-                for chunk in range(0, len(media_batch), 10):
-                    await context.bot.send_media_group(
-                        chat_id=GROUP_CHAT_ID,
-                        message_thread_id=topic_id,
-                        media=media_batch[chunk:chunk + 10],
-                    )
-            else:
-                await context.bot.copy_message(
-                    chat_id=GROUP_CHAT_ID,
-                    from_chat_id=item["chat_id"],
-                    message_id=item["msg_id"],
-                    message_thread_id=topic_id,
-                )
-                i += 1
 
     try:
         await _post_to_group()
-        await context.bot.send_message(
+        notif = await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📬 *Yangi topshiriq!*\n👤 {em(ism)}  |  🔢 #{group_id}",
+            text=f"📬 *Yangi topshiriq!*\n{info_text}",
             parse_mode="Markdown",
             reply_markup=group_sorov_inline(group_id),
         )
+        # Admin reply yo'naltirish uchun: notif msg_id → (group_id, xodim uid)
+        context.bot_data.setdefault("admin_notif_map", {})[notif.message_id] = (group_id, uid)
+
         await msg.reply_text(
             f"✅ #{group_id}-sonli so'rovingiz qabul qilindi. Admin javobini kuting.",
             reply_markup=_role_keyboard(lavozim),
@@ -584,6 +610,10 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         entry = {"type": "video", "msg_id": msg.message_id, "chat_id": msg.chat_id,
                  "file_id": msg.video.file_id, "caption": msg.caption}
         ctype = "🎥 Video"
+    elif msg.location:
+        entry = {"type": "location", "msg_id": msg.message_id, "chat_id": msg.chat_id,
+                 "lat": msg.location.latitude, "lon": msg.location.longitude}
+        ctype = "📍 Lokatsiya"
     elif msg.text:
         entry = {"type": "text", "msg_id": msg.message_id, "chat_id": msg.chat_id, "text": msg.text}
         ctype = "💬 Matn"
@@ -872,6 +902,10 @@ async def _cb_group_action(query, context, action: str, group_id: int):
             logger.warning(f"Guruh jarayon xabari yuborishda xato: {e}")
 
     elif action == "done":
+        if holat == "bajarildi":
+            await query.answer("Bu guruh allaqachon bajarilgan!", show_alert=True)
+            return
+
         # SLA reminder joblarni bekor qilish
         for j in context.job_queue.get_jobs_by_name(f"sla_{group_id}_1"):
             j.schedule_removal()
@@ -2860,8 +2894,29 @@ async def klient_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Klientni rad etish, klient qidirish va sorov javobini yuborish."""
+    """Klientni rad etish, klient qidirish, sorov javobini yuborish va admin private reply."""
     if update.effective_user.id != ADMIN_ID:
+        return
+
+    msg = update.message
+    if not msg:
+        return
+
+    # Admin private chatda xodim notifikatsiyasiga reply → xodimga yo'naltirish
+    if msg.reply_to_message:
+        replied_id = msg.reply_to_message.message_id
+        notif_map = context.bot_data.get("admin_notif_map", {})
+        if replied_id in notif_map:
+            group_id, emp_uid = notif_map[replied_id]
+            try:
+                await msg.copy(chat_id=emp_uid)
+                await msg.reply_text(f"✅ #{group_id} xodimga yuborildi.")
+            except Exception as e:
+                logger.warning(f"Admin private reply xodimga yuborishda xato: {e}")
+            return
+
+    # Matn bo'lmasa quyidagi logikani o'tkazib yuboramiz
+    if not msg.text:
         return
 
     # Check if admin is replying to a sorov message
