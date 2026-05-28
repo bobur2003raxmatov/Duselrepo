@@ -3040,3 +3040,52 @@ async def mk_view_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Klient rasm yuborishda xato: {e}")
 
     await query.edit_message_text(profile, parse_mode="Markdown", reply_markup=back_kb)
+
+
+# ══════════════════════════════════════════════
+# FORUM TOPIC CLOSED → delete employee + audit
+# ══════════════════════════════════════════════
+
+async def topic_closed_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin guruhda topic yopilganda/o'chirilganda xodimni bazadan o'chirib, qayta ro'yxatga yuboradi."""
+    msg = update.effective_message
+    if not msg or msg.chat.id != GROUP_CHAT_ID:
+        return
+
+    topic_id = msg.message_thread_id
+    if not topic_id:
+        return
+
+    row = await db.get_xodim_by_topic(topic_id)
+    if not row:
+        return
+
+    user_id, ism = row
+
+    # Audit log: kim, qachon o'chirildi
+    await db.insert_audit_log(
+        user_id=user_id,
+        user_role="xodim",
+        action_type="topic_deleted",
+        target=ism,
+        old_value=f"topic_id={topic_id}",
+        new_value=None,
+        status="deleted",
+    )
+
+    await db.delete_xodim(user_id)
+    logger.info(f"Topic #{topic_id} o'chirildi → xodim {ism} ({user_id}) bazadan o'chirildi")
+
+    # Xodimga xabar: qayta ro'yxatdan o'tish kerak
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "⚠️ *Sizning profilingiz administrator tomonidan o'chirildi.*\n\n"
+                "Qayta ro'yxatdan o'tish uchun /start bosing."
+            ),
+            parse_mode="Markdown",
+            reply_markup=remove_kb(),
+        )
+    except Exception as e:
+        logger.warning(f"Xodimga xabar yuborishda xato (user_id={user_id}): {e}")

@@ -80,6 +80,7 @@ from handlers import (
     admin_klientlar,
     klient_reject_reason,
     admin_tarix, tarix_filter_callback,
+    topic_closed_handler,
 )
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
@@ -270,6 +271,12 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex(r"^📥 Excel$"),                  admin_excel_eksport))
     app.add_handler(MessageHandler(filters.Regex(r"^🏪 Klientlar$"),              admin_klientlar))
     app.add_handler(MessageReactionHandler(reaction_handler))
+
+    # Topic o'chirilganda xodimni bazadan o'chirish
+    app.add_handler(MessageHandler(
+        filters.Chat(GROUP_CHAT_ID) & filters.StatusUpdate.FORUM_TOPIC_CLOSED,
+        topic_closed_handler,
+    ))
 
     app.add_handler(CallbackQueryHandler(sorov_sup_callback, pattern=r"^sorov_appr_|^sorov_rej_"))
     app.add_handler(CallbackQueryHandler(tarix_filter_callback, pattern=r"^tarix_f_"))
