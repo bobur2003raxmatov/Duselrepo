@@ -366,7 +366,7 @@ def _match_agent_code(kod: str):
 
 
 async def kod_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kod = update.message.text.strip()
+    kod = update.message.text.strip().split()[0]  # faqat birinchi so'z
     lavozim = context.user_data.get("lavozim", "")
 
     if lavozim == "Agent":
@@ -2493,23 +2493,16 @@ async def klient_agent_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return KLIENT_AGENT_KOD
 
-    agent_vizit = update.message.text.strip().upper()
-    if agent_vizit not in AGENT_KODLAR:
+    agent_vizit = update.message.text.strip().split()[0].upper()
+    result = _match_agent_code(agent_vizit)
+    if not result:
         await update.message.reply_text(
             "❌ Bu agent kodi tizimda mavjud emas.\n"
             "Iltimos, to'g'ri agent kodini kiriting:"
         )
         return KLIENT_AGENT_KOD
 
-    prefix = agent_vizit[:2]
-    region = AGENT_PREFIX_REGIONS.get(prefix)
-    if not region:
-        await update.message.reply_text(
-            "❌ Agent kodining prefiksi noto'g'ri.\n"
-            "Iltimos, to'g'ri agent kodini kiriting:"
-        )
-        return KLIENT_AGENT_KOD
-
+    _, region = result
     context.user_data["klient_data"]["agent_vizit"] = agent_vizit
     context.user_data["klient_data"]["agent_region"] = region
     logger.info(f"[KLIENT] Agent/Vizit accepted: {agent_vizit} ({region})")
