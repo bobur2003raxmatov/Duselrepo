@@ -828,7 +828,8 @@ async def batch_collect_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return await _show_batch_preview(update, context)
 
     batch = context.user_data.setdefault("batch", {
-        "messages": [], "photos": [], "files": [], "voices": [], "videos": []
+        "messages": [], "photos": [], "files": [], "voices": [], "videos": [],
+        "location": None,
     })
 
     text = (msg.text or msg.caption or "").strip()
@@ -842,6 +843,8 @@ async def batch_collect_handler(update: Update, context: ContextTypes.DEFAULT_TY
         batch["voices"].append(msg.voice.file_id)
     if msg.video:
         batch["videos"].append(msg.video.file_id)
+    if msg.location:
+        batch["location"] = {"lat": msg.location.latitude, "lon": msg.location.longitude}
 
     _reschedule_batch_timer(context, uid)
 
@@ -851,6 +854,7 @@ async def batch_collect_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if batch["files"]:    counts.append(f"📎 {len(batch['files'])}")
     if batch["voices"]:   counts.append(f"🎙 {len(batch['voices'])}")
     if batch["videos"]:   counts.append(f"🎥 {len(batch['videos'])}")
+    if batch["location"]: counts.append(f"📍 1")
 
     await msg.reply_text(
         f"✅ Qabul qilindi \\({', '.join(counts) or '0'}\\)\n"
@@ -869,11 +873,12 @@ async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE
     files    = batch.get("files", [])
     voices   = batch.get("voices", [])
     videos   = batch.get("videos", [])
+    location = batch.get("location")
     uid      = update.effective_user.id
     ism      = sorov_data.get("agent_ism", "")
     lavozim  = sorov_data.get("lavozim", "Agent")
 
-    total = len(messages) + len(photos) + len(files) + len(voices) + len(videos)
+    total = len(messages) + len(photos) + len(files) + len(voices) + len(videos) + (1 if location else 0)
     if total == 0:
         await update.message.reply_text(
             "❌ Hali hech narsa yuborilmagan\\. Xabar, rasm yoki fayl yuboring\\.",
@@ -896,6 +901,8 @@ async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE
             caption_lines.append(em(m[:400]))
         if len(messages) > 3:
             caption_lines.append(f"_\\.\\.\\. yana {len(messages) - 3} ta xabar_")
+    if location:
+        caption_lines.append(f"📍 `{location['lon']:.6f}; {location['lat']:.6f}`")
     caption_lines.append(f"\n_Yuqoridagi ma'lumotlar to'g'rimi?_")
     caption = "\n".join(caption_lines)
 
@@ -955,6 +962,12 @@ async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE
     for fid in voices:
         try:
             await context.bot.send_voice(chat_id=uid, voice=fid)
+        except Exception:
+            pass
+    if location:
+        try:
+            await context.bot.send_location(chat_id=uid,
+                                             latitude=location["lat"], longitude=location["lon"])
         except Exception:
             pass
 
@@ -1021,18 +1034,21 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
     files    = batch.get("files", [])
     voices   = batch.get("voices", [])
     videos   = batch.get("videos", [])
+    location = batch.get("location")
     ism      = sorov_data.get("agent_ism", "")
     lavozim  = sorov_data.get("lavozim", "")
 
     combined_text = "\n".join(messages)
     all_media_json = json.dumps({"files": files, "voices": voices, "videos": videos}) if (files or voices or videos) else None
+    lat = location["lat"] if location else None
+    lon = location["lon"] if location else None
 
     supervisor_id, group_chat_id = await _resolve_group(uid, lavozim)
 
     sorov_id = await db.insert_sorov(
         agent_id=uid, agent_ism=ism, tur="boshqa",
         dokon_nomi=None, yangi_qiymat=all_media_json,
-        lat=None, lon=None,
+        lat=lat, lon=lon,
         foto_ids=json.dumps(photos) if photos else None,
         izoh=combined_text,
         supervisor_id=supervisor_id,
@@ -1050,6 +1066,8 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
         card_lines.append("\n📝 *Xabarlar:*")
         for m in messages:
             card_lines.append(em(m[:500]))
+    if lat is not None and lon is not None:
+        card_lines.append(f"📍 `{lon:.6f}; {lat:.6f}`")
     card_lines.append(f"\n🆔 So'rov \\#{sorov_id}")
     card = "\n".join(card_lines)
 
@@ -1156,12 +1174,22 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
                     await context.bot.send_voice(chat_id=supervisor_id, voice=fid)
                 except Exception:
                     pass
+            if lat is not None and lon is not None:
+                try:
+                    await context.bot.send_location(chat_id=supervisor_id, latitude=lat, longitude=lon)
+                except Exception:
+                    pass
             if sup_msg_id:
                 await db.update_sorov_sup_msg_id(sorov_id, sup_msg_id)
             sent_ok = True
         elif group_chat_id:
             await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=card, parse_mode="MarkdownV2", **thread_b)
             await _send_photos_and_media(GROUP_CHAT_ID, thread_b)
+            if lat is not None and lon is not None:
+                try:
+                    await context.bot.send_location(chat_id=GROUP_CHAT_ID, latitude=lat, longitude=lon, **thread_b)
+                except Exception:
+                    pass
             await db.update_sorov_group_id(sorov_id, GROUP_CHAT_ID)
             try:
                 await context.bot.send_message(
