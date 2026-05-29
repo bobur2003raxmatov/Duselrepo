@@ -1487,6 +1487,25 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     sup_role = _lavozim_to_role(sup_row[3]) if sup_row else "supervisor"
 
     agent_msg_id = sorov[16] if len(sorov) > 16 else None
+    status = sorov[10]
+
+    # Guard: prevent double-processing when multiple push reminders exist
+    # sorov_appr / sorov_rej require pending_supervisor status
+    # sorov_done / sorov_rad require approved status
+    _required = {
+        "sorov_appr": "pending_supervisor",
+        "sorov_rej":  "pending_supervisor",
+        "sorov_done": "approved",
+        "sorov_rad":  "approved",
+    }
+    expected = _required.get(action)
+    if expected and status != expected:
+        await query.answer("ℹ️ Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
 
     if action == "sorov_done":
         await db.update_sorov_status(sorov_id, "done")
