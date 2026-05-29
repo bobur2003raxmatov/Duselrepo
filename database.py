@@ -631,6 +631,19 @@ async def get_pending_sorovlar_by_supervisor() -> dict[int, int]:
     return {row[0]: row[1] for row in rows}
 
 
+async def get_pending_sorovlar_for_push() -> list[tuple]:
+    """Returns [(supervisor_id, sorov_id, sup_msg_id), ...] for pending sorovlar push."""
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT supervisor_id, id, sup_msg_id FROM sorovlar "
+            "WHERE status='pending_supervisor' AND supervisor_id IS NOT NULL "
+            "AND supervisor_id NOT IN (SELECT user_id FROM admins) "
+            "ORDER BY supervisor_id, id"
+        ) as cur:
+            rows = await cur.fetchall()
+    return list(rows)
+
+
 async def get_blocked_xodimlar() -> list:
     async with get_db() as db:
         async with db.execute(

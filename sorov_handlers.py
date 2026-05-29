@@ -1510,24 +1510,19 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if action == "sorov_rad":
-        await db.update_sorov_status(sorov_id, "admin_rejected")
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
+        context.user_data["pending_sorov_reject"] = {
+            "sorov_id": sorov_id,
+            "agent_id": agent_id,
+            "agent_msg_id": agent_msg_id,
+        }
         await query.message.reply_text(
-            f"❌ So'rov \\#{sorov_id} rad etildi\\.",
+            f"❌ *\\#{sorov_id}\\-so'rovni rad etish*\n\nRad etish sababini yozing:",
             parse_mode="MarkdownV2",
         )
-        try:
-            await context.bot.send_message(
-                chat_id=agent_id,
-                text=f"❌ Sizning *\\#{sorov_id}\\-so'rovingiz* rad etildi\\.",
-                parse_mode="MarkdownV2",
-                reply_to_message_id=agent_msg_id,
-            )
-        except Exception:
-            pass
         return
 
     if action == "sorov_appr":

@@ -2772,6 +2772,33 @@ async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
     if await handle_admin_sorov_reply(update, context):
         return
 
+    # Admin so'rovni rad etish — sabab kutilmoqda
+    pending_reject = context.user_data.get("pending_sorov_reject")
+    if pending_reject:
+        context.user_data.pop("pending_sorov_reject", None)
+        sorov_id_r   = pending_reject["sorov_id"]
+        agent_id_r   = pending_reject["agent_id"]
+        agent_msg_r  = pending_reject.get("agent_msg_id")
+        reason       = (update.message.text or "").strip() if update.message else ""
+        await db.update_sorov_status(sorov_id_r, "admin_rejected")
+        await update.message.reply_text(
+            f"❌ So'rov \\#{sorov_id_r} rad etildi\\. Sabab: {em(reason or '—')}",
+            parse_mode="MarkdownV2",
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=agent_id_r,
+                text=(
+                    f"❌ Sizning *\\#{sorov_id_r}\\-so'rovingiz* admin tomonidan rad etildi\\.\n"
+                    f"📝 Sabab: {em(reason or '—')}"
+                ),
+                parse_mode="MarkdownV2",
+                reply_to_message_id=agent_msg_r,
+            )
+        except Exception as e:
+            logger.warning(f"Agent reject xabari yuborishda xato: {e}")
+        return
+
     # Handle supervisor group assignment
     pending_setgroup = context.user_data.get("pending_setgroup_uid")
     if pending_setgroup:

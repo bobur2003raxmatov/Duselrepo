@@ -282,27 +282,32 @@ async def generate_full_excel(data: dict) -> str:
 
 
 async def pending_sorovlar_alert_job(context: ContextTypes.DEFAULT_TYPE):
-    from database import get_pending_sorovlar_by_supervisor, is_admin
-    sup_counts = await get_pending_sorovlar_by_supervisor()
-    if not sup_counts:
+    from database import get_pending_sorovlar_for_push, is_admin
+    from keyboards import sorov_tasdiqlash_kb
+    rows = await get_pending_sorovlar_for_push()
+    if not rows:
         return
-    for sup_id, count in sup_counts.items():
-        # Triple guard: hardcoded ADMIN_ID, DB admin check, avoid self-notify
+    for sup_id, sorov_id, sup_msg_id in rows:
         if sup_id == ADMIN_ID:
             continue
         if await is_admin(sup_id):
             continue
         try:
+            kwargs = {}
+            if sup_msg_id:
+                kwargs["reply_to_message_id"] = sup_msg_id
             await context.bot.send_message(
                 chat_id=sup_id,
                 text=(
-                    f"⏰ *{count} ta so'rov tasdiqlanishingizni kutmoqda\\!*\n"
-                    "_Agentlar tomonidan yuborilgan va hali tasdiqlanmagan so'rovlar\\._"
+                    f"⏰ *\\#{sorov_id}\\-so'rov hali tasdiqlanmagan\\!*\n"
+                    "_Tasdiqlaysizmi yoki rad etasizmi?_"
                 ),
                 parse_mode="MarkdownV2",
+                reply_markup=sorov_tasdiqlash_kb(sorov_id),
+                **kwargs,
             )
         except Exception as e:
-            logger.warning(f"Pending sorov alert xato (supervisor={sup_id}): {e}")
+            logger.warning(f"Pending sorov push xato (sup={sup_id}, sorov={sorov_id}): {e}")
 
 
 async def generate_klientlar_excel(rows: list) -> str:
