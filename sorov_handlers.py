@@ -447,15 +447,30 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int, topi
         elif tur == "vizit":
             caption = _card_vizit(ism, izoh, sorov_id, lavozim)
             foto_ids = json.loads(sorov[8]) if sorov[8] else []
-            if len(foto_ids) == 1:
-                await context.bot.send_photo(
-                    chat_id=group_chat_id, photo=foto_ids[0],
-                    caption=caption, parse_mode="MarkdownV2", **thread
-                )
-            elif foto_ids:
-                all_media = [InputMediaPhoto(fid) for fid in foto_ids]
-                all_media[0] = InputMediaPhoto(
-                    media=all_media[0].media, caption=caption, parse_mode="MarkdownV2"
+            extra = json.loads(qiymat) if (qiymat and qiymat.startswith("{")) else {}
+            video_ids_v = extra.get("videos", [])
+            files_v     = extra.get("files", [])
+            voices_v    = extra.get("voices", [])
+            all_media = (
+                [InputMediaPhoto(fid) for fid in foto_ids] +
+                [InputMediaVideo(fid) for fid in video_ids_v]
+            )
+            if len(all_media) == 1:
+                if foto_ids:
+                    await context.bot.send_photo(
+                        chat_id=group_chat_id, photo=foto_ids[0],
+                        caption=caption, parse_mode="MarkdownV2", **thread
+                    )
+                else:
+                    await context.bot.send_video(
+                        chat_id=group_chat_id, video=video_ids_v[0],
+                        caption=caption, parse_mode="MarkdownV2", **thread
+                    )
+            elif all_media:
+                all_media[0] = (
+                    InputMediaPhoto(all_media[0].media, caption=caption, parse_mode="MarkdownV2")
+                    if isinstance(all_media[0], InputMediaPhoto)
+                    else InputMediaVideo(all_media[0].media, caption=caption, parse_mode="MarkdownV2")
                 )
                 for chunk_start in range(0, len(all_media), 10):
                     await context.bot.send_media_group(
@@ -465,6 +480,17 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int, topi
                 await context.bot.send_message(
                     chat_id=group_chat_id, text=caption, parse_mode="MarkdownV2", **thread
                 )
+            for f_info in files_v:
+                fid = f_info["file_id"] if isinstance(f_info, dict) else f_info
+                try:
+                    await context.bot.send_document(chat_id=group_chat_id, document=fid, **thread)
+                except Exception:
+                    pass
+            for fid in voices_v:
+                try:
+                    await context.bot.send_voice(chat_id=group_chat_id, voice=fid, **thread)
+                except Exception:
+                    pass
         else:  # boshqa / limit
             card = _build_card(sorov, lavozim)
             if tur == "boshqa":
@@ -591,13 +617,8 @@ async def sorov_tur_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SOROV_DOKON
 
     if tur == "vizit":
-        await query.edit_message_text(
-            "🖼 *Vizitda muammo*\n\nKamida 3 ta rasm yuboring "
-            "(do'kon nomi va vizitda qo'shilgan bo'limlar ko'rinsin):",
-            parse_mode="Markdown",
-        )
-        context.user_data["sorov_data"]["fotolar"] = []
-        return SOROV_FOTO
+        await query.edit_message_text("🖼 *Vizitda muammo*", parse_mode="Markdown")
+        return await _enter_batch_mode(update, context)
 
     # boshqa → batch mode
     await query.edit_message_text("💬 *Boshqa muammo*", parse_mode="Markdown")
@@ -800,17 +821,29 @@ async def _batch_auto_submit_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def _enter_batch_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = update.effective_user.id
     context.user_data["batch"] = {
-        "messages": [], "photos": [], "files": [], "voices": [], "videos": []
+        "messages": [], "photos": [], "files": [], "voices": [], "videos": [],
+        "location": None,
     }
-    _reschedule_batch_timer(context, uid)
-    await context.bot.send_message(
-        chat_id=uid,
-        text=(
+    tur = context.user_data.get("sorov_data", {}).get("tur", "boshqa")
+    if tur == "vizit":
+        intro = (
+            "🖼 *Vizit muammo yozish rejimi*\n\n"
+            "Rasm, video, matn yuboring\\.\n"
+            "Kamida 1 ta rasm bo'lishi tavsiya etiladi\\.\n"
+            "Tayyor bo'lgach *'📤 Yuborish'* tugmasini bosing\\.\n"
+            "⏱ _3 daqiqa faolsiz bo'lsangiz, avtomatik yuboriladi\\._"
+        )
+    else:
+        intro = (
             "📩 *Muammo yozish rejimi*\n\n"
             "Xabar, rasm yoki fayl yuboring\\.\n"
             "Tayyor bo'lgach *'📤 Yuborish'* tugmasini bosing\\.\n"
             "⏱ _3 daqiqa faolsiz bo'lsangiz, avtomatik yuboriladi\\._"
-        ),
+        )
+    _reschedule_batch_timer(context, uid)
+    await context.bot.send_message(
+        chat_id=uid,
+        text=intro,
         parse_mode="MarkdownV2",
         reply_markup=batch_collect_kb(),
     )
@@ -878,6 +911,7 @@ async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE
     ism      = sorov_data.get("agent_ism", "")
     lavozim  = sorov_data.get("lavozim", "Agent")
 
+    tur = sorov_data.get("tur", "boshqa")
     total = len(messages) + len(photos) + len(files) + len(voices) + len(videos) + (1 if location else 0)
     if total == 0:
         await update.message.reply_text(
@@ -890,8 +924,12 @@ async def _show_batch_preview(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Build preview caption (same as what supervisor will receive, #??? placeholder)
     now_str = datetime.now().strftime("%d\\.%m\\.%Y %H:%M")
     role_label = em(lavozim)
+    if tur == "vizit":
+        type_title = "🖼 *Vizitda muammo — tasdiqlash*"
+    else:
+        type_title = "💬 *Boshqa muammo — tasdiqlash*"
     caption_lines = [
-        f"💬 *Boshqa muammo — tasdiqlash*",
+        type_title,
         f"👤 {role_label}: {em(ism)}",
         f"🕐 {now_str}",
     ]
@@ -1038,6 +1076,7 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
     ism      = sorov_data.get("agent_ism", "")
     lavozim  = sorov_data.get("lavozim", "")
 
+    tur = sorov_data.get("tur", "boshqa")
     combined_text = "\n".join(messages)
     all_media_json = json.dumps({"files": files, "voices": voices, "videos": videos}) if (files or voices or videos) else None
     lat = location["lat"] if location else None
@@ -1046,7 +1085,7 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
     supervisor_id, group_chat_id = await _resolve_group(uid, lavozim)
 
     sorov_id = await db.insert_sorov(
-        agent_id=uid, agent_ism=ism, tur="boshqa",
+        agent_id=uid, agent_ism=ism, tur=tur,
         dokon_nomi=None, yangi_qiymat=all_media_json,
         lat=lat, lon=lon,
         foto_ids=json.dumps(photos) if photos else None,
@@ -1054,22 +1093,25 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
         supervisor_id=supervisor_id,
     )
 
-    # Build card
-    now_str = datetime.now().strftime("%d\\.%m\\.%Y %H:%M")
-    role_label = em(lavozim) if lavozim else "Agent"
-    card_lines = [
-        f"💬 *Boshqa muammo*",
-        f"👤 {role_label}: {em(ism)}",
-        f"🕐 {now_str}",
-    ]
-    if messages:
-        card_lines.append("\n📝 *Xabarlar:*")
-        for m in messages:
-            card_lines.append(em(m[:500]))
-    if lat is not None and lon is not None:
-        card_lines.append(f"📍 `{lon:.6f}; {lat:.6f}`")
-    card_lines.append(f"\n🆔 So'rov \\#{sorov_id}")
-    card = "\n".join(card_lines)
+    # Build card based on tur
+    if tur == "vizit":
+        card = _card_vizit(ism, combined_text or "—", sorov_id, lavozim or "Agent")
+    else:
+        now_str = datetime.now().strftime("%d\\.%m\\.%Y %H:%M")
+        role_label = em(lavozim) if lavozim else "Agent"
+        card_lines = [
+            f"💬 *Boshqa muammo*",
+            f"👤 {role_label}: {em(ism)}",
+            f"🕐 {now_str}",
+        ]
+        if messages:
+            card_lines.append("\n📝 *Xabarlar:*")
+            for m in messages:
+                card_lines.append(em(m[:500]))
+        if lat is not None and lon is not None:
+            card_lines.append(f"📍 `{lon:.6f}; {lat:.6f}`")
+        card_lines.append(f"\n🆔 So'rov \\#{sorov_id}")
+        card = "\n".join(card_lines)
 
     async def _send_photos_and_media(chat_id: int, thread_kwargs: dict = {}) -> None:
         media_group = (
@@ -1210,7 +1252,7 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
         await db.insert_audit_log(
             user_id=uid,
             user_role=_lavozim_to_role(lavozim),
-            action_type="boshqa_muammo",
+            action_type="vizit_muammo" if tur == "vizit" else "boshqa_muammo",
             target=None,
             old_value=None,
             new_value=combined_text[:500] if combined_text else None,
