@@ -648,12 +648,33 @@ async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id, _ = row
 
-    # Admin xodimning forward qilingan xabariga reply qilyaptimi?
+    # Admin reply qilyaptimi? — uchta usulda tegishli shaxsiy xabar ID sini topamiz
     reply_to_private_id = None
     if msg.reply_to_message:
-        xabar = await db.get_xabar_by_group_fwd_id(msg.reply_to_message.message_id)
+        replied_id = msg.reply_to_message.message_id
+
+        # 1. xabarlar jadvali: xodim yuborgan va topicga forward qilingan xabarlar
+        xabar = await db.get_xabar_by_group_fwd_id(replied_id)
         if xabar:
-            reply_to_private_id = xabar[1]  # xodimning asl msg_id si
+            reply_to_private_id = xabar[1]
+
+        # 2. admin_msg_map: adminning oldingi reply lari (shaxsiy chatta nusxasi bor)
+        if not reply_to_private_id:
+            reply_to_private_id = await db.get_private_msg_id_by_group(user_id, replied_id)
+
+        # 3. Mapping topilmadi (masalan, bot yuborgan so'rov kartasi) —
+        #    replied xabarni shaxsiy chatga ko'chirib, shu ID ni ishlatamiz
+        if not reply_to_private_id:
+            try:
+                ctx = await context.bot.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=GROUP_CHAT_ID,
+                    message_id=replied_id,
+                    reply_markup=None,
+                )
+                reply_to_private_id = ctx.message_id
+            except Exception as e:
+                logger.warning(f"Context xabar ko'chirishda xato (uid={user_id}): {e}")
 
     try:
         try:
@@ -661,7 +682,6 @@ async def admin_guruh_javob(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent = await msg.copy(chat_id=user_id, reply_parameters=rp)
         except BadRequest:
             sent = await msg.copy(chat_id=user_id)
-        # Mapping saqlash: keyingi xodim reply si uchun
         await db.insert_admin_msg_map(user_id, msg.message_id, sent.message_id)
     except Exception as e:
         logger.error(f"Admin javobini xodimga yuborishda xato (uid={user_id}): {e}")

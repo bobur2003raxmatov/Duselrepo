@@ -797,6 +797,17 @@ async def get_group_msg_id_by_private(user_id: int, private_msg_id: int) -> int 
             return row[0] if row else None
 
 
+async def get_private_msg_id_by_group(user_id: int, group_msg_id: int) -> int | None:
+    """Guruh xabar ID si bo'yicha xodim shaxsiy chatidagi xabar ID sini qaytaradi."""
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT private_msg_id FROM admin_msg_map WHERE user_id=? AND group_msg_id=?",
+            (user_id, group_msg_id)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
 async def get_xodim_by_topic(topic_id: int) -> tuple | None:
     """Returns (user_id, ism) for the employee who owns this topic."""
     async with get_db() as db:
