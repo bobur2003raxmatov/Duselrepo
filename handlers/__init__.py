@@ -51,9 +51,10 @@ from handlers._core import (
     # Klient ro'yxatdan o'tkazish
     new_client_command,
     klient_rasm, klient_firma_nomi, klient_telefon1, klient_telefon2,
-    klient_inn, klient_orienter, klient_lokatsiya,
-    klient_dokon_turi, klient_distributor, klient_agent_kod,
-    klient_limit, klient_confirm,
+    klient_inn, klient_orienter, klient_lokatsiya, klient_lokatsiya_hint,
+    klient_kategoriya, klient_dokon_turi, klient_distributor, klient_agent_kod,
+    klient_chastota,
+    klient_limit, klient_confirm, klient_edit_value,
 
     # Admin klientlar
     admin_klientlar, klient_reject_reason,

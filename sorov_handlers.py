@@ -77,6 +77,25 @@ def _lavozim_to_role(lavozim: str) -> str:
     }.get(lavozim, (lavozim or "unknown").lower())
 
 
+async def _safe_edit(query, text: str, **kwargs):
+    """Edit message text; fall back to caption (photo messages) or reply_text."""
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except Exception as e:
+        if "no text" in str(e).lower() or "there is no" in str(e).lower():
+            try:
+                await query.edit_message_caption(caption=text, **kwargs)
+                return
+            except Exception:
+                pass
+            try:
+                await query.message.reply_text(text, **kwargs)
+            except Exception:
+                pass
+        else:
+            raise
+
+
 def _role_kb(lavozim: str):
     if lavozim == "Agent":
         return agent_kb()
@@ -283,7 +302,8 @@ async def _send_to_supervisor(context, sorov_id: int, sorov_data: dict,
 # ══════════════════════════════════════════════
 
 async def _post_to_group(context, sorov_id: int, sorov_data: dict,
-                          ism: str, group_chat_id: int, topic_id: int | None = None):
+                          ism: str, group_chat_id: int, topic_id: int | None = None,
+                          user_id: int | None = None):
     tur     = sorov_data.get("tur", "")
     dokon   = sorov_data.get("dokon_nomi", "—")
     lavozim = sorov_data.get("lavozim", "Agent")
@@ -395,6 +415,11 @@ async def _post_to_group(context, sorov_id: int, sorov_data: dict,
             logger.warning(f"Topic {topic_id} yopiq/yo'q, umumiy topicga qayta yubormoqda: {e}")
             await _send({})
             thread = {}
+            if user_id:
+                try:
+                    await db.clear_topic_id(user_id)
+                except Exception:
+                    pass
         else:
             raise
 
@@ -555,6 +580,10 @@ async def _post_to_group_from_db(context, sorov: tuple, group_chat_id: int, topi
             logger.warning(f"Topic {topic_id} yopiq/yo'q, umumiy topicga qayta yubormoqda: {e}")
             await _send_card({})
             thread = {}
+            try:
+                await db.clear_topic_id(sorov[1])
+            except Exception:
+                pass
         else:
             raise
 
@@ -606,6 +635,13 @@ async def sorov_tur_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     tur = query.data[len("sorov_tur_"):]  # lokatsiya | telefon | vizit | boshqa
+
+    if "sorov_data" not in context.user_data:
+        await query.edit_message_text(
+            "❗ So'rov sessiyasi tugagan\\. /start bilan qaytadan boshlang\\.",
+            parse_mode="MarkdownV2",
+        )
+        return ConversationHandler.END
 
     context.user_data["sorov_data"]["tur"] = tur
 
@@ -1429,10 +1465,10 @@ async def _finish_sorov(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _send_to_supervisor(context, sorov_id, data, ism, supervisor_id)
             sent_ok = True
         else:
-            await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, agent_topic_id)
+            await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, agent_topic_id, user_id=uid)
             sent_ok = True
     else:  # FR, Supervisor
-        await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, agent_topic_id)
+        await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, agent_topic_id, user_id=uid)
         sent_ok = True
 
     if sent_ok:
@@ -1523,6 +1559,7 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 text=f"✅ Sizning *\\#{sorov_id}\\-so'rovingiz* bajarildi\\!",
                 parse_mode="MarkdownV2",
                 reply_to_message_id=agent_msg_id,
+                allow_sending_without_reply=True,
             )
         except Exception:
             pass
@@ -1537,6 +1574,8 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "sorov_id": sorov_id,
             "agent_id": agent_id,
             "agent_msg_id": agent_msg_id,
+            "dokon": dokon,
+            "admin_msg_id": query.message.message_id,
         }
         await query.message.reply_text(
             f"❌ *\\#{sorov_id}\\-so'rovni rad etish*\n\nRad etish sababini yozing:",
@@ -1578,7 +1617,8 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if group_chat_id:
             try:
                 await _post_to_group_from_db(context, sorov, GROUP_CHAT_ID, agent_topic_id)
-                await query.edit_message_text(
+                await _safe_edit(
+                    query,
                     f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
                     f"📤 Guruhga yuborildi: `{group_chat_id}`",
                     parse_mode="Markdown",
@@ -1586,7 +1626,8 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except Exception as e:
                 err = str(e)
                 logger.error(f"[APPR] Guruhga yuborishda xato group={group_chat_id}: {err}")
-                await query.edit_message_text(
+                await _safe_edit(
+                    query,
                     f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
                     f"⚠️ Guruhga yuborishda xato: {err}\n"
                     f"Group ID: `{group_chat_id}`",
@@ -1605,7 +1646,8 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     pass
         else:
             logger.error(f"[APPR] GROUP_CHAT_ID fallback also missing — sup_uid={sup_uid}")
-            await query.edit_message_text(
+            await _safe_edit(
+                query,
                 f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
                 f"⚠️ Guruhga yuborib bo'lmadi. Admin bilan bog'laning.",
                 parse_mode="Markdown",
@@ -1622,6 +1664,7 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 ),
                 parse_mode="MarkdownV2",
                 reply_to_message_id=agent_msg_id,
+                allow_sending_without_reply=True,
             )
         except Exception:
             pass
@@ -1647,7 +1690,7 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as _e:
             logger.warning(f"Audit log yozishda xato (sorov_rej): {_e}")
 
-        await query.edit_message_text(f"❌ So'rov #{sorov_id} rad etildi.")
+        await _safe_edit(query, f"❌ So'rov #{sorov_id} rad etildi.")
         elapsed = _elapsed(sana)
         agent_msg_id = sorov[16] if len(sorov) > 16 else None
         try:
@@ -1661,6 +1704,7 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 ),
                 parse_mode="MarkdownV2",
                 reply_to_message_id=agent_msg_id,
+                allow_sending_without_reply=True,
             )
         except Exception:
             pass
@@ -1735,12 +1779,9 @@ async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thread_l = {"message_thread_id": lim_topic_id} if lim_topic_id else {}
     card = _card_limit(ism, dokon, limit_str, sorov_id)
 
-    try:
+    async def _send_limit(thread: dict):
         await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text=card,
-            parse_mode="MarkdownV2",
-            **thread_l,
+            chat_id=GROUP_CHAT_ID, text=card, parse_mode="MarkdownV2", **thread,
         )
         await db.update_sorov_group_id(sorov_id, GROUP_CHAT_ID)
         try:
@@ -1749,21 +1790,35 @@ async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"⬇️ So'rov \\#{sorov_id} — amal tanlang:",
                 parse_mode="MarkdownV2",
                 reply_markup=sorov_action_inline(sorov_id),
-                **thread_l,
+                **thread,
             )
         except Exception:
             pass
-        await update.message.reply_text(
-            f"✅ Limit so'rovi yuborildi!\n🏪 Dokon: {dokon}\n💰 Limitlar:\n"
-            + "\n".join(f"  • {line.strip()}" for line in limit_str.splitlines()),
-            reply_markup=filial_rahbari_kb(),
-        )
+
+    try:
+        await _send_limit(thread_l)
     except Exception as e:
-        logger.warning(f"Limit guruhga yuborishda xato: {e}")
-        await update.message.reply_text(
-            f"⚠️ Guruhga yuborishda xato: {e}",
-            reply_markup=filial_rahbari_kb(),
-        )
+        err_str = str(e).lower()
+        if lim_topic_id and ("thread" in err_str or "topic" in err_str or "message_thread" in err_str):
+            logger.warning(f"Limit: Topic {lim_topic_id} yopiq/yo'q, umumiy topicga qayta yubormoqda: {e}")
+            await _send_limit({})
+            try:
+                await db.clear_topic_id(uid)
+            except Exception:
+                pass
+        else:
+            logger.warning(f"Limit guruhga yuborishda xato: {e}")
+            await update.message.reply_text(
+                f"⚠️ Guruhga yuborishda xato: {e}", reply_markup=filial_rahbari_kb(),
+            )
+            context.user_data.pop("limit_data", None)
+            return ConversationHandler.END
+
+    await update.message.reply_text(
+        f"✅ Limit so'rovi yuborildi!\n🏪 Dokon: {dokon}\n💰 Limitlar:\n"
+        + "\n".join(f"  • {line.strip()}" for line in limit_str.splitlines()),
+        reply_markup=filial_rahbari_kb(),
+    )
 
     context.user_data.pop("limit_data", None)
     return ConversationHandler.END

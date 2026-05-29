@@ -99,6 +99,20 @@ def filial_rahbari_kb() -> ReplyKeyboardMarkup:
     )
 
 
+def operator_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["🏪 Yangi Klient", "📝 Muammo yozish"]],
+        resize_keyboard=True,
+    )
+
+
+def distribyutor_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["📝 Muammo yozish"]],
+        resize_keyboard=True,
+    )
+
+
 def batch_collect_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([["📤 Yuborish"]], resize_keyboard=True)
 
@@ -555,9 +569,29 @@ def klient_brendlar_kb_selected(selected: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def klient_kategoriya_kb() -> InlineKeyboardMarkup:
+    from config import KATEGORIYA_LIST
+    buttons = [
+        [InlineKeyboardButton(f"🔵 {k}", callback_data=f"klient_kat_{k}")]
+        for k in KATEGORIYA_LIST
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def klient_edit_fields_kb() -> InlineKeyboardMarkup:
+    from config import KLIENT_EDIT_LABELS
+    buttons = [
+        [InlineKeyboardButton(label, callback_data=f"klient_ef_{key}")]
+        for key, label in KLIENT_EDIT_LABELS.items()
+    ]
+    buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="klient_edit_back")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def klient_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Tasdiqlash", callback_data="klient_submit")],
+        [InlineKeyboardButton("✏️ Tahrirlash",  callback_data="klient_edit")],
         [InlineKeyboardButton("❌ Bekor qilish", callback_data="klient_cancel")],
     ])
 

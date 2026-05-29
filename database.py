@@ -442,6 +442,15 @@ async def approve_xodim(user_id: int, topic_id: int):
         await db.commit()
 
 
+async def clear_topic_id(user_id: int):
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE xodimlar SET topic_id=NULL WHERE user_id=?",
+            (user_id,)
+        )
+        await db.commit()
+
+
 async def reject_xodim(user_id: int):
     async with get_db() as db:
         await db.execute(
@@ -1590,3 +1599,22 @@ async def check_duplicate_telefon(telefon: str) -> dict | None:
                         "lokatsiya_address")
                 return dict(zip(cols, row))
             return None
+
+
+async def get_full_db_for_excel() -> dict:
+    """Barcha jadvallardan ma'lumot to'plab generate_full_excel uchun dict qaytaradi."""
+    xodimlar    = await get_all_xodimlar_for_excel()
+    sorovlar    = await get_sorovlar_for_excel()
+    klientlar   = await get_all_klientlar_full_for_excel()
+    biriktirish = await get_all_biriktirish_detailed()
+    baholash    = await get_baholash_for_excel()
+    audit_log   = await get_audit_log_for_excel()
+    return {
+        "xodimlar":     xodimlar,
+        "topshiriqlar": sorovlar,
+        "klientlar":    klientlar,
+        "sorovlar":     sorovlar,
+        "biriktirish":  biriktirish,
+        "baholash":     baholash,
+        "audit_log":    audit_log,
+    }

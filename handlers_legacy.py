@@ -26,7 +26,9 @@ from keyboards import (
     klient_dokon_turi_kb, klient_confirm_kb,
     klientlar_search_page_inline,
     mening_klientlar_kb,
-    agent_kb, supervisor_kb, filial_rahbari_kb,
+    agent_kb, supervisor_kb, filial_rahbari_kb, operator_kb, distribyutor_kb,
+    klient_lokatsiya_inline_kb, klient_brendlar_kb, klient_brendlar_kb_selected,
+    klient_vizit_kun_kb, klient_chastota_kb,
 )
 
 
@@ -36,10 +38,14 @@ def _role_keyboard(lavozim: str):
         return agent_kb()
     if lavozim == "Filial Rahbari":
         return filial_rahbari_kb()
+    if lavozim == "Operator":
+        return operator_kb()
+    if lavozim == "Distribyutor":
+        return distribyutor_kb()
     return supervisor_kb()
 from utils import (
     is_topic_valid, check_sla_timeout, generate_excel, generate_klientlar_excel,
-    urgency_timeout_job, checker_timeout_job,
+    generate_full_excel, urgency_timeout_job, checker_timeout_job,
 )
 from config import (
     ADMIN_ID, GROUP_CHAT_ID, FILIALLAR, LAVOZIMLAR,
@@ -1299,6 +1305,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         os.remove(filename)
 
+    elif data == "excel_fulldb":
+        await query.answer()
+        await query.edit_message_text("🗄 To'liq DB eksport tayyorlanmoqda...")
+        full_data = await db.get_full_db_for_excel()
+        filename = await generate_full_excel(full_data)
+        with open(filename, "rb") as f:
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=f,
+                caption=f"🗄 To'liq DB eksport — {__import__('datetime').date.today().strftime('%d.%m.%Y')}",
+                filename=filename,
+            )
+        os.remove(filename)
+
     elif data.startswith("klientlar_page_"):
         page = safe_callback_int(data, "_", 2)
         if page is None:
@@ -2281,10 +2301,10 @@ async def klient_orienter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "📍 *7-QADAM: Lokatsiya* (majburiy)\n\n"
-        "_GPS ulashish tugmasidan yoki koordinata/manzil yozing:_\n"
+        "_GPS ulashish tugmasini bosing yoki koordinata/manzil yozing:_\n"
         "_Masalan: 41.2995, 69.2401_",
         parse_mode="Markdown",
-        reply_markup=remove_kb(),
+        reply_markup=klient_lokatsiya_inline_kb(),
     )
     return KLIENT_LOKATSIYA
 
@@ -2345,6 +2365,23 @@ async def klient_lokatsiya(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=klient_dokon_turi_kb(),
     )
     return KLIENT_DOKON_TURI
+
+
+async def klient_lokatsiya_hint(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """lok_gps / lok_text — foydalanuvchiga yo'riqnoma yuboradi."""
+    query = update.callback_query
+    await query.answer()
+    if query.data == "lok_gps":
+        await query.message.reply_text(
+            "📍 Telegram'dagi 📎 → *Lokatsiya* tugmasini bosib GPS ulashing.",
+            parse_mode="Markdown",
+        )
+    else:
+        await query.message.reply_text(
+            "✏️ Manzilni matn ko'rinishida yozing.\n_Masalan: 41.2995, 69.2401 yoki ko'cha nomi_",
+            parse_mode="Markdown",
+        )
+    return KLIENT_LOKATSIYA
 
 
 async def klient_dokon_turi(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2422,9 +2459,46 @@ async def klient_agent_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ Agent kodi qabul qilindi: *{agent_vizit}*\n"
         f"📍 Hudud: *{region}*\n\n"
-        "💰 *12-QADAM: Limit* (majburiy)\n\n"
-        "_Har loyiha uchun limitni yozing. Masalan:_\n"
-        "```\nCable: 1,000,000\nDusel: 500,000\nTools: 800,000\n```",
+        "📅 *11-QADAM: Vizit kuni* (majburiy)\n\n"
+        "_Qaysi kuni vizit qilinishini tanlang:_",
+        parse_mode="Markdown",
+        reply_markup=klient_vizit_kun_kb(),
+    )
+    return KLIENT_VIZIT_KUN
+
+
+async def klient_vizit_kun(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """11-qadam: vizit kuni (inline)."""
+    query = update.callback_query
+    await query.answer()
+    from config import VIZIT_KUNLARI
+    idx = int(query.data[len("klient_kun_"):])
+    kun = VIZIT_KUNLARI[idx]
+    context.user_data["klient_data"]["vizit_kun"] = kun
+    await query.edit_message_text(f"✅ Vizit kuni: *{kun}*", parse_mode="Markdown")
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="🔄 *12-QADAM: Chastota* (majburiy)\n\n_Vizit chastotasini tanlang:_",
+        parse_mode="Markdown",
+        reply_markup=klient_chastota_kb(),
+    )
+    return KLIENT_CHASTOTA
+
+
+async def klient_chastota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """12-qadam: chastota (inline)."""
+    query = update.callback_query
+    await query.answer()
+    from config import CHASTOTA_LIST
+    idx = int(query.data[len("klient_chas_"):])
+    chastota = CHASTOTA_LIST[idx]
+    context.user_data["klient_data"]["chastota"] = chastota
+    await query.edit_message_text(f"✅ Chastota: *{chastota}*", parse_mode="Markdown")
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="💰 *13-QADAM: Limit* (majburiy)\n\n"
+             "_Har loyiha uchun limitni yozing. Masalan:_\n"
+             "```\nCable: 1,000,000\nDusel: 500,000\nTools: 800,000\n```",
         parse_mode="Markdown",
         reply_markup=remove_kb(),
     )
@@ -2442,10 +2516,46 @@ async def klient_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return KLIENT_LIMIT
 
     context.user_data["klient_data"]["limit_text"] = limit_text
+    context.user_data["klient_data"]["brendlar_selected"] = []
     logger.info(f"[KLIENT] Limit accepted: {limit_text[:50]}")
 
-    await _show_klient_summary(update.message.reply_text, context.user_data["klient_data"])
-    return KLIENT_CONFIRM
+    await update.message.reply_text(
+        "🏷 *14-QADAM: Brendlar* (majburiy)\n\n"
+        "_Ishlayotgan brendlarni tanlang va ✅ Tasdiqla bosing:_",
+        parse_mode="Markdown",
+        reply_markup=klient_brendlar_kb(),
+    )
+    return KLIENT_BRENDLAR
+
+
+async def klient_brendlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """14-qadam: brendlar multi-select (inline)."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "klient_brands_confirm":
+        selected = context.user_data["klient_data"].get("brendlar_selected", [])
+        from config import BRENDLAR_LIST
+        brendlar_str = ", ".join(BRENDLAR_LIST[i] for i in sorted(selected)) if selected else ""
+        context.user_data["klient_data"]["brendlar"] = brendlar_str
+        await query.edit_message_text(
+            f"✅ Brendlar: *{brendlar_str or 'Tanlanmagan'}*", parse_mode="Markdown"
+        )
+        await _show_klient_summary(
+            lambda **kw: context.bot.send_message(chat_id=query.message.chat_id, **kw),
+            context.user_data["klient_data"],
+        )
+        return KLIENT_CONFIRM
+
+    # Toggle brand selection
+    idx = int(query.data[len("klient_brand_"):])
+    selected = context.user_data["klient_data"].setdefault("brendlar_selected", [])
+    if idx in selected:
+        selected.remove(idx)
+    else:
+        selected.append(idx)
+    await query.edit_message_reply_markup(reply_markup=klient_brendlar_kb_selected(selected))
+    return KLIENT_BRENDLAR
 
 
 def _format_lokatsiya(data: dict) -> str:
@@ -2481,7 +2591,10 @@ async def _show_klient_summary(send_fn, data: dict):
         f"🏪 Do'kon turi: {em(data['dokon_turi'])}\n"
         f"👤 Distributor: {em(data['distributor'])}\n"
         f"👨 Agent kodi: {em(data['agent_vizit'])} — 📍 {em(data.get('agent_region', ''))}\n"
+        f"📅 Vizit kuni: {em(data.get('vizit_kun') or '—')}\n"
+        f"🔄 Chastota: {em(data.get('chastota') or '—')}\n"
         f"💰 Limit: {em(data['limit_text'])}\n"
+        f"🏷 Brendlar: {em(data.get('brendlar') or '—')}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     await send_fn(summary, parse_mode="Markdown", reply_markup=klient_confirm_kb())
@@ -2511,10 +2624,10 @@ async def klient_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dokon_turi=data.get("dokon_turi"),
                 distributor=data.get("distributor"),
                 agent_kod=data.get("agent_vizit"),
-                vizit_kun="",
-                chastota="",
+                vizit_kun=data.get("vizit_kun", ""),
+                chastota=data.get("chastota", ""),
                 limit_summa=data.get("limit_text"),
-                brendlar="",
+                brendlar=data.get("brendlar", ""),
                 supervisor_id=supervisor_id,
             )
 
@@ -2776,24 +2889,38 @@ async def klient_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
     pending_reject = context.user_data.get("pending_sorov_reject")
     if pending_reject:
         context.user_data.pop("pending_sorov_reject", None)
-        sorov_id_r   = pending_reject["sorov_id"]
-        agent_id_r   = pending_reject["agent_id"]
-        agent_msg_r  = pending_reject.get("agent_msg_id")
-        reason       = (update.message.text or "").strip() if update.message else ""
+        sorov_id_r    = pending_reject["sorov_id"]
+        agent_id_r    = pending_reject["agent_id"]
+        agent_msg_r   = pending_reject.get("agent_msg_id")
+        dokon_r       = pending_reject.get("dokon") or "—"
+        admin_msg_r   = pending_reject.get("admin_msg_id")
+        reason        = (update.message.text or "").strip() if update.message else ""
         await db.update_sorov_status(sorov_id_r, "admin_rejected")
-        await update.message.reply_text(
-            f"❌ So'rov \\#{sorov_id_r} rad etildi\\. Sabab: {em(reason or '—')}",
-            parse_mode="MarkdownV2",
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text=(
+                    f"❌ *\\#{sorov_id_r}\\-so'rov* rad etildi\\.\n"
+                    f"🏪 Do'kon: {em(dokon_r)}\n"
+                    f"📝 Sabab: {em(reason or '—')}"
+                ),
+                parse_mode="MarkdownV2",
+                reply_to_message_id=admin_msg_r,
+                allow_sending_without_reply=True,
+            )
+        except Exception as e:
+            logger.warning(f"Admin rad tasdiq yuborishda xato: {e}")
         try:
             await context.bot.send_message(
                 chat_id=agent_id_r,
                 text=(
-                    f"❌ Sizning *\\#{sorov_id_r}\\-so'rovingiz* admin tomonidan rad etildi\\.\n"
+                    f"❌ Sizning *\\#{sorov_id_r}\\-so'rovingiz* rad etildi\\.\n"
+                    f"🏪 Do'kon: {em(dokon_r)}\n"
                     f"📝 Sabab: {em(reason or '—')}"
                 ),
                 parse_mode="MarkdownV2",
                 reply_to_message_id=agent_msg_r,
+                allow_sending_without_reply=True,
             )
         except Exception as e:
             logger.warning(f"Agent reject xabari yuborishda xato: {e}")

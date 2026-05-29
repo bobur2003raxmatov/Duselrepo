@@ -120,9 +120,24 @@ AGENT_DATABASE = {
 # Supervisor kodi: <PREFIX>100  (e.g. AN100, SM100)
 SUPERVISOR_KODLAR = {prefix + "100" for prefix in AGENT_PREFIX_REGIONS}
 
-BRENDLAR_LIST = ["Dusel", "Verla", "Cable", "Ockean", "Tools"]
-VIZIT_KUNLARI = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"]
-CHASTOTA_LIST = ["1x1 (har hafta)", "2x1 (ikki haftada)", "1x1 (oyda)"]
+BRENDLAR_LIST  = ["Dusel", "Verla", "Cable", "Ockean", "Tools"]
+VIZIT_KUNLARI  = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"]
+CHASTOTA_LIST  = ["1x1 (har hafta)", "2x1 (ikki haftada)", "1x1 (oyda)"]
+KATEGORIYA_LIST = ["A", "B", "C", "D"]
+
+KLIENT_EDIT_LABELS = {
+    "firma_nomi":  "🏢 Firma nomi",
+    "telefon1":    "📱 Telefon 1",
+    "telefon2":    "📱 Telefon 2",
+    "inn":         "🔢 INN",
+    "orienter":    "📍 Orienter",
+    "kategoriya":  "🗂 Kategoriya",
+    "dokon_turi":  "🏪 Do'kon turi",
+    "distributor": "👤 Distributor",
+    "agent_vizit": "👨 Agent kodi/Vizit",
+    "chastota":    "🔄 Chastota",
+    "limit_text":  "💰 Limit",
+}
 
 SLA_TIMEOUT_SEC   = 900  # 15 daqiqa
 GROUP_TIMEOUT_SEC = 60   # 1 daqiqa — bir guruhga birlashish oynasi
@@ -150,11 +165,13 @@ KLIENT_KATEGORIYA   = 27
 KLIENT_DOKON_TURI   = 28
 KLIENT_DISTRIBUTOR  = 29
 KLIENT_AGENT_KOD    = 30
-KLIENT_VIZIT_KUN    = 31
+KLIENT_VIZIT_KUN    = 31  # unused — vizit kuni agent koddan olinadi
 KLIENT_CHASTOTA     = 32
 KLIENT_LIMIT        = 33
-KLIENT_BRENDLAR     = 34
+KLIENT_BRENDLAR     = 34  # unused — brendlar olib tashlandi
 KLIENT_CONFIRM      = 35
+KLIENT_EDIT_FIELD   = 36
+KLIENT_EDIT_VALUE   = 37
 
 URGENCY_TIMEOUT_SEC = 60   # urgency tanlanmasa shu soniyadan keyin oddiy deb hisoblanadi
 CHECKER_TIMEOUT_SEC = 1800 # checker 30 daqiqada javob bermasa admin ogohlantiriladi
