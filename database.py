@@ -11,7 +11,10 @@ from datetime import datetime
 from asgiref.sync import sync_to_async
 from django.db import connection
 
-from config import GROUP_TIMEOUT_SEC, ADMIN_ID
+from django.conf import settings
+
+GROUP_TIMEOUT_SEC = settings.GROUP_TIMEOUT_SEC
+ADMIN_ID = settings.ADMIN_ID
 
 
 # ── Lazy model import (Django setup dan keyin) ───────────────────────────────

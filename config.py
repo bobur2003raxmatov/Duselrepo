@@ -1,203 +1,89 @@
-import os
-import re
+"""
+config.py — Django settings uchun thin wrapper.
 
-TOKEN = os.environ.get("TOKEN")
-if not TOKEN:
-    raise ValueError("❌ TOKEN environment variable is required. Set it before running the bot.")
+Barcha konstantalar dusel/settings.py da saqlanadi.
+Bu fayl import muvofiqligini ta'minlaydi — handlerlar o'zgarishsiz ishlaydi.
+"""
+from django.conf import settings
 
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "7839267271"))
-GROUP_CHAT_ID = -1003802115020
-DB_PATH       = os.environ.get("DB_PATH", "dusel_company.db")
+TOKEN               = settings.TELEGRAM_TOKEN
+ADMIN_ID            = settings.ADMIN_ID
+GROUP_CHAT_ID       = settings.GROUP_CHAT_ID
+DB_PATH             = settings.DB_PATH
+WEBHOOK_URL         = settings.WEBHOOK_URL
+PORT                = settings.PORT
 
-# Webhook rejimi: WEBHOOK_URL o'rnatilsa webhook, aks holda polling
-# Masalan: https://yourapp.railway.app
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").rstrip("/")
-PORT        = int(os.environ.get("PORT", "8443"))
+FILIALLAR           = settings.FILIALLAR
+LAVOZIMLAR          = settings.LAVOZIMLAR
+DOKON_TURLARI       = settings.DOKON_TURLARI
+DOKON_SLUGLARI      = settings.DOKON_SLUGLARI
+AGENT_PREFIX_REGIONS = settings.AGENT_PREFIX_REGIONS
+AGENT_DATABASE      = settings.AGENT_DATABASE
+SUPERVISOR_KODLAR   = settings.SUPERVISOR_KODLAR
+BRENDLAR_LIST       = settings.BRENDLAR_LIST
+VIZIT_KUNLARI       = settings.VIZIT_KUNLARI
+CHASTOTA_LIST       = settings.CHASTOTA_LIST
+KATEGORIYA_LIST     = settings.KATEGORIYA_LIST
+KLIENT_EDIT_LABELS  = settings.KLIENT_EDIT_LABELS
 
-FILIALLAR = [
-    "Namangan Tools", "Navoiy Tools", "Qashqadaryo Tools", "Samarqand Tools",
-    "Test Filial",    "Xorazasp",     "Andijon",            "Buxoro",
-    "Gijduvon",       "Denov",        "Jizzax",             "Qo'qon",
-    "Qoson",          "Nukus",        "Samarqand",          "Termiz",
-    "Toshkent",       "Farg'ona",     "Xorazm",
-]
-
-LAVOZIMLAR = ["Filial Rahbari", "Supervisor", "Agent", "Operator", "Distribyutor"]
-
-DOKON_TURLARI = [
-    "Elektromarket",
-    "Elektrotexnika",
-    "Elektrotovar",
-    "Elektrotovar Lyustra",
-    "Gipermarket",
-    "Kabel, Avtomatika",
-    "Lyustra",
-    "Oziq-ovqat",
-    "Quruvchi",
-    "Santexnika",
-    "Xoz Mag",
-    "Boshqa",
-]
-DOKON_SLUGLARI = {re.sub(r'[^a-z0-9]+', '_', k.lower()).strip('_'): k for k in DOKON_TURLARI}
-
-AGENT_PREFIX_REGIONS = {
-    "AN": "Andijon",
-    "BX": "Buxoro",
-    "FA": "Farg'ona",
-    "QQ": "Qoraqalpog'iston",
-    "TM": "Toshkent",
-    "XM": "Xorazm",
-    "JZ": "Jizzax",
-    "KS": "Qashqadaryo",
-    "SM": "Samarqand",
-    "NM": "Namangan",
-    "NK": "Namangan",
-    "NV": "Navoiy",
-    "GJ": "Qashqadaryo",
-}
-
-# Agent code → full name database
-AGENT_DATABASE = {
-    "AN01": "Abdusattorov Fazliddin",
-    "AN02": "Xojibaxromov Xalilulloh",
-    "AN04": "Topvoldiyev Mirzohid",
-    "AN05": "Raxmatullayev Ilhomjon",
-    "AN07": "Nematov Azizbek",
-    "AN08": "Hakimov Mavlonbek",
-    "BX01": "Vokhidov Abdumalik",
-    "BX02": "Zubaydullayev Jamhur",
-    "BX03": "Nematov Ahmed",
-    "BX04": "Amodillayev Mirshod",
-    "FA01": "Marufiov Ro'zimuhammad",
-    "FA02": "Toshpo'latov Muhammadjon",
-    "FA03": "Mirzaliyev Abdulatif",
-    "FA07": "Erkinjonov Shoxrux",
-    "QQ01": "Mahkamov Muzaffar",
-    "QQ02": "Muhammadjonov Rashidjon",
-    "QQ03": "Azimov Abrorxon",
-    "QQ08": "Fayzullaxojayev Obidxoja",
-    "TM02": "Mo'minov Shaxzod",
-    "TM03": "Orzuqulov Abdunazar",
-    "TM04": "Rustamov Umidjon",
-    "TM05": "Xayitov Umid",
-    "TM07": "To'raboyev Umidjon",
-    "TM08": "Kamolov Quvonchbek",
-    "XM01": "Rozimov Alisher",
-    "XM03": "Jumanazarov Muzaffar",
-    "XM04": "Xusainov Bekzod",
-    "SM01": "Jurayev Shaxboz",
-    "SM02": "Bekpo'latov Qutbiddin",
-    "SM03": "Xakimov Dilmurod",
-    "SM04": "Abduraxmonov Elmurod",
-    "SM06": "Norbo'tayev Jo'rabek",
-    "SM07": "Asatullayev Inomjon",
-    "GJ01": "Maqsudov Mirshod",
-    "GJ02": "Sharapov Shahboz",
-    "GJ03": "Muhammedov Muhammad",
-    "GJ04": "Baxshillayev Behruz",
-    "GJ07": "Oripov Damir",
-    "NK01": "Soatboyev Suhrob",
-    "NK02": "Ko'klanov Og'abek",
-    "NV01": "Umrzoqov Rashid",
-    "NV02": "Mamayusupov Normurod",
-    "NV03": "Akramov Alisher",
-    "NV05": "Axtamov Murodbek",
-    "JZ01": "Muhammadiev Shaxboz",
-    "JZ03": "Toshpulatov Abdunazar",
-    "JZ04": "Yusupov Muhammad",
-    "JZ07": "Islomov Ilhom",
-    "JZ08": "Sattarov Abdusamad",
-    "KS01": "Rustamov Sardor",
-    "KS02": "Rustamov Azizbek",
-    "KS03": "Rustamov Shaxzod",
-    "KS06": "Qudratov Alimardon",
-    "KS07": "Toyirov Mirjalol",
-    "KS08": "Shoyimqulov Yodgor",
-    "NM01": "Xakimjanov Akbar",
-    "NM02": "Akbarov Akbarjon",
-}
-
-# Supervisor kodi: <PREFIX>100  (e.g. AN100, SM100)
-SUPERVISOR_KODLAR = {prefix + "100" for prefix in AGENT_PREFIX_REGIONS}
-
-BRENDLAR_LIST  = ["Dusel", "Verla", "Cable", "Ockean", "Tools"]
-VIZIT_KUNLARI  = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"]
-CHASTOTA_LIST  = ["1x1 (har hafta)", "2x1 (ikki haftada)", "1x1 (oyda)"]
-KATEGORIYA_LIST = ["A", "B", "C", "D"]
-
-KLIENT_EDIT_LABELS = {
-    "firma_nomi":  "🏢 Firma nomi",
-    "telefon1":    "📱 Telefon 1",
-    "telefon2":    "📱 Telefon 2",
-    "inn":         "🔢 INN",
-    "orienter":    "📍 Orienter",
-    "kategoriya":  "🗂 Kategoriya",
-    "dokon_turi":  "🏪 Do'kon turi",
-    "distributor": "👤 Distributor",
-    "agent_vizit": "👨 Agent kodi/Vizit",
-    "chastota":    "🔄 Chastota",
-    "limit_text":  "💰 Limit",
-}
-
-SLA_TIMEOUT_SEC   = 900  # 15 daqiqa
-GROUP_TIMEOUT_SEC = 60   # 1 daqiqa — bir guruhga birlashish oynasi
+SLA_TIMEOUT_SEC     = settings.SLA_TIMEOUT_SEC
+GROUP_TIMEOUT_SEC   = settings.GROUP_TIMEOUT_SEC
+URGENCY_TIMEOUT_SEC = settings.URGENCY_TIMEOUT_SEC
+CHECKER_TIMEOUT_SEC = settings.CHECKER_TIMEOUT_SEC
+BATCH_TIMEOUT_SEC   = settings.BATCH_TIMEOUT_SEC
+PAGE_SIZE           = settings.PAGE_SIZE
+INSTRUKSIYA_VIDEO_ID = settings.INSTRUKSIYA_VIDEO_ID
 
 # Conversation states
-ISM, LAVOZIM, KOD, FILIAL, TELEFON, TELEFON2, TUGILGAN_KUN = range(7)
-XODIM_LIST          = 7
-EDIT_USER, EDIT_FIELD, EDIT_VALUE = range(8, 11)
-SEARCH_QUERY        = 11
-BIRIKTIR_AGENT      = 12
-BIRIKTIR_CHECKER    = 13
-BIRIKTIR_DETAIL     = 14
-BIRIKTIR_EDIT_FIELD = 15
-BIRIKTIR_EDIT_VALUE = 16
+ISM             = settings.ISM
+LAVOZIM         = settings.LAVOZIM
+KOD             = settings.KOD
+FILIAL          = settings.FILIAL
+TELEFON         = settings.TELEFON
+TELEFON2        = settings.TELEFON2
+TUGILGAN_KUN    = settings.TUGILGAN_KUN
+XODIM_LIST      = settings.XODIM_LIST
+EDIT_USER       = settings.EDIT_USER
+EDIT_FIELD      = settings.EDIT_FIELD
+EDIT_VALUE      = settings.EDIT_VALUE
+SEARCH_QUERY    = settings.SEARCH_QUERY
+BIRIKTIR_AGENT      = settings.BIRIKTIR_AGENT
+BIRIKTIR_CHECKER    = settings.BIRIKTIR_CHECKER
+BIRIKTIR_DETAIL     = settings.BIRIKTIR_DETAIL
+BIRIKTIR_EDIT_FIELD = settings.BIRIKTIR_EDIT_FIELD
+BIRIKTIR_EDIT_VALUE = settings.BIRIKTIR_EDIT_VALUE
 
-# Client registration states (16 steps)
-KLIENT_RASM         = 20
-KLIENT_FIRMA_NOMI   = 21
-KLIENT_TELEFON1     = 22
-KLIENT_TELEFON2     = 23
-KLIENT_INN          = 24
-KLIENT_ORIENTER     = 25
-KLIENT_LOKATSIYA    = 26
-KLIENT_KATEGORIYA   = 27
-KLIENT_DOKON_TURI   = 28
-KLIENT_DISTRIBUTOR  = 29
-KLIENT_AGENT_KOD    = 30
-KLIENT_VIZIT_KUN    = 31  # unused — vizit kuni agent koddan olinadi
-KLIENT_CHASTOTA     = 32
-KLIENT_LIMIT        = 33
-KLIENT_BRENDLAR     = 34  # unused — brendlar olib tashlandi
-KLIENT_CONFIRM      = 35
-KLIENT_EDIT_FIELD   = 36
-KLIENT_EDIT_VALUE   = 37
+KLIENT_RASM         = settings.KLIENT_RASM
+KLIENT_FIRMA_NOMI   = settings.KLIENT_FIRMA_NOMI
+KLIENT_TELEFON1     = settings.KLIENT_TELEFON1
+KLIENT_TELEFON2     = settings.KLIENT_TELEFON2
+KLIENT_INN          = settings.KLIENT_INN
+KLIENT_ORIENTER     = settings.KLIENT_ORIENTER
+KLIENT_LOKATSIYA    = settings.KLIENT_LOKATSIYA
+KLIENT_KATEGORIYA   = settings.KLIENT_KATEGORIYA
+KLIENT_DOKON_TURI   = settings.KLIENT_DOKON_TURI
+KLIENT_DISTRIBUTOR  = settings.KLIENT_DISTRIBUTOR
+KLIENT_AGENT_KOD    = settings.KLIENT_AGENT_KOD
+KLIENT_VIZIT_KUN    = settings.KLIENT_VIZIT_KUN
+KLIENT_CHASTOTA     = settings.KLIENT_CHASTOTA
+KLIENT_LIMIT        = settings.KLIENT_LIMIT
+KLIENT_BRENDLAR     = settings.KLIENT_BRENDLAR
+KLIENT_CONFIRM      = settings.KLIENT_CONFIRM
+KLIENT_EDIT_FIELD   = settings.KLIENT_EDIT_FIELD
+KLIENT_EDIT_VALUE   = settings.KLIENT_EDIT_VALUE
 
-URGENCY_TIMEOUT_SEC = 60   # urgency tanlanmasa shu soniyadan keyin oddiy deb hisoblanadi
-CHECKER_TIMEOUT_SEC = 1800 # checker 30 daqiqada javob bermasa admin ogohlantiriladi
+SOROV_TUR           = settings.SOROV_TUR
+SOROV_DOKON         = settings.SOROV_DOKON
+SOROV_LOK           = settings.SOROV_LOK
+SOROV_TEL           = settings.SOROV_TEL
+SOROV_FOTO          = settings.SOROV_FOTO
+SOROV_IZOH          = settings.SOROV_IZOH
+SOROV_MSG           = settings.SOROV_MSG
+LIMIT_DOKON         = settings.LIMIT_DOKON
+LIMIT_SUMMA         = settings.LIMIT_SUMMA
+SOROV_BATCH_COLLECT = settings.SOROV_BATCH_COLLECT
+SOROV_BATCH_PREVIEW = settings.SOROV_BATCH_PREVIEW
+SOROV_CONFIRM       = settings.SOROV_CONFIRM
 
-# Pagination
-PAGE_SIZE = 10
-
-# So'rov (request) flow states
-SOROV_TUR   = 40
-SOROV_DOKON = 41
-SOROV_LOK   = 42
-SOROV_TEL   = 43
-SOROV_FOTO  = 44
-SOROV_IZOH  = 45
-SOROV_MSG          = 46  # kept for compatibility (no longer used in conv handler)
-SOROV_BATCH_COLLECT = 49
-SOROV_BATCH_PREVIEW = 50
-SOROV_CONFIRM       = 51
-# Limit qo'shish (Filial Rahbari)
-LIMIT_DOKON = 47
-LIMIT_SUMMA = 48
-
-BATCH_TIMEOUT_SEC = 180  # 3 daqiqa faolsiz → auto-submit
-
-INSTR_MATN    = 60  # Admin instruksiya tahrirlash
-ADD_ADMIN_ID  = 61  # /add_admin 2-qadam
-
-# /instruksiya video placeholder (update file_id here once video is uploaded)
-INSTRUKSIYA_VIDEO_ID = ""
+INSTR_MATN   = settings.INSTR_MATN
+ADD_ADMIN_ID = settings.ADD_ADMIN_ID
