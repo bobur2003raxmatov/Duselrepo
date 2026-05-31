@@ -1,0 +1,216 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="Xodim",
+            fields=[
+                ("user_id", models.BigIntegerField(primary_key=True, serialize=False)),
+                ("ism", models.TextField(blank=True, null=True)),
+                ("lavozim", models.TextField(blank=True, null=True)),
+                ("kod", models.TextField(blank=True, null=True)),
+                ("filial", models.TextField(blank=True, null=True)),
+                ("telefon1", models.TextField(blank=True, null=True)),
+                ("telefon2", models.TextField(blank=True, null=True)),
+                ("tugilgan_kun", models.TextField(blank=True, null=True)),
+                ("topic_id", models.IntegerField(blank=True, null=True)),
+                ("status", models.TextField(default="pending")),
+                ("sana", models.TextField(blank=True, null=True)),
+            ],
+            options={"db_table": "xodimlar", "verbose_name": "Xodim", "verbose_name_plural": "Xodimlar"},
+        ),
+        migrations.CreateModel(
+            name="Xabar",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("user_id", models.BigIntegerField()),
+                ("xodim_name", models.TextField(blank=True, null=True)),
+                ("filial", models.TextField(blank=True, null=True)),
+                ("xabar_turi", models.TextField(blank=True, null=True)),
+                ("vaqt", models.TextField(blank=True, null=True)),
+                ("holat", models.TextField(default="kutilmoqda")),
+                ("javob_vaqt", models.TextField(blank=True, null=True)),
+                ("msg_id", models.IntegerField(blank=True, null=True)),
+                ("group_fwd_id", models.IntegerField(blank=True, null=True)),
+                ("group_id", models.IntegerField(blank=True, null=True)),
+            ],
+            options={"db_table": "xabarlar", "verbose_name": "Xabar", "verbose_name_plural": "Xabarlar"},
+        ),
+        migrations.CreateModel(
+            name="XabarGuruhi",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("user_id", models.BigIntegerField()),
+                ("ism", models.TextField(blank=True, null=True)),
+                ("filial", models.TextField(blank=True, null=True)),
+                ("topic_id", models.IntegerField(blank=True, null=True)),
+                ("holat", models.TextField(default="kutilmoqda")),
+                ("vaqt", models.TextField(blank=True, null=True)),
+                ("javob_vaqt", models.TextField(blank=True, null=True)),
+                ("urgency", models.TextField(blank=True, default="oddiy", null=True)),
+            ],
+            options={"db_table": "xabar_guruhi", "verbose_name": "Xabar guruhi", "verbose_name_plural": "Xabar guruhlari"},
+        ),
+        migrations.CreateModel(
+            name="FaqKategoriya",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("emoji", models.TextField(default="📌")),
+                ("nomi", models.TextField()),
+                ("tartib", models.IntegerField(default=0)),
+            ],
+            options={"db_table": "faq_kategoriya", "ordering": ["tartib", "id"], "verbose_name": "FAQ Kategoriya", "verbose_name_plural": "FAQ Kategoriyalar"},
+        ),
+        migrations.CreateModel(
+            name="Faq",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("kategoriya", models.ForeignKey(
+                    blank=True, db_constraint=False, null=True,
+                    on_delete=models.deletion.CASCADE,
+                    to="bot_app.faqkategoriya",
+                )),
+                ("savol", models.TextField()),
+                ("javob", models.TextField()),
+                ("tartib", models.IntegerField(default=0)),
+            ],
+            options={"db_table": "faq", "ordering": ["tartib", "id"], "verbose_name": "FAQ", "verbose_name_plural": "FAQlar"},
+        ),
+        migrations.CreateModel(
+            name="Baholash",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("group_id", models.IntegerField(unique=True)),
+                ("checker_id", models.BigIntegerField()),
+                ("agent_id", models.BigIntegerField()),
+                ("yulduz", models.IntegerField()),
+                ("vaqt", models.TextField(blank=True, null=True)),
+            ],
+            options={"db_table": "baholash", "verbose_name": "Baholash", "verbose_name_plural": "Baholashlar"},
+        ),
+        migrations.CreateModel(
+            name="CheckerFaollik",
+            fields=[
+                ("checker_id", models.BigIntegerField(primary_key=True, serialize=False)),
+                ("last_active", models.TextField(blank=True, null=True)),
+            ],
+            options={"db_table": "checker_faollik", "verbose_name": "Checker faollik", "verbose_name_plural": "Checker faolliklar"},
+        ),
+        migrations.CreateModel(
+            name="Biriktirish",
+            fields=[
+                ("agent_id", models.BigIntegerField(primary_key=True, serialize=False)),
+                ("checker_id", models.BigIntegerField()),
+            ],
+            options={"db_table": "biriktirish", "verbose_name": "Biriktirish", "verbose_name_plural": "Biriktirishlar"},
+        ),
+        migrations.CreateModel(
+            name="AdminMsgMap",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("user_id", models.BigIntegerField()),
+                ("group_msg_id", models.IntegerField()),
+                ("private_msg_id", models.IntegerField()),
+            ],
+            options={"db_table": "admin_msg_map", "verbose_name": "Admin xabar mapping", "verbose_name_plural": "Admin xabar mappinglar"},
+        ),
+        migrations.CreateModel(
+            name="Klient",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("rasm_file_id", models.TextField(blank=True, null=True)),
+                ("firma_nomi", models.TextField()),
+                ("telefon1", models.TextField()),
+                ("telefon2", models.TextField(blank=True, null=True)),
+                ("inn", models.TextField(blank=True, null=True, unique=True)),
+                ("orienter", models.TextField()),
+                ("lokatsiya_lat", models.FloatField(blank=True, null=True)),
+                ("lokatsiya_lon", models.FloatField(blank=True, null=True)),
+                ("kategoriya", models.TextField()),
+                ("dokon_turi", models.TextField()),
+                ("distributor", models.TextField()),
+                ("agent_kod", models.TextField()),
+                ("vizit_kun", models.TextField()),
+                ("chastota", models.TextField()),
+                ("limit_summa", models.FloatField()),
+                ("brendlar", models.TextField(blank=True, null=True)),
+                ("status", models.TextField(default="pending")),
+                ("reject_reason", models.TextField(blank=True, null=True)),
+                ("sana", models.TextField(blank=True, null=True)),
+                ("supervisor_id", models.BigIntegerField()),
+                ("lokatsiya_address", models.TextField(blank=True, null=True)),
+            ],
+            options={"db_table": "klientlar", "verbose_name": "Klient", "verbose_name_plural": "Klientlar"},
+        ),
+        migrations.CreateModel(
+            name="Sorov",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("agent_id", models.BigIntegerField()),
+                ("agent_ism", models.TextField()),
+                ("tur", models.TextField()),
+                ("dokon_nomi", models.TextField(blank=True, null=True)),
+                ("yangi_qiymat", models.TextField(blank=True, null=True)),
+                ("lat", models.FloatField(blank=True, null=True)),
+                ("lon", models.FloatField(blank=True, null=True)),
+                ("foto_ids", models.TextField(blank=True, null=True)),
+                ("izoh", models.TextField(blank=True, null=True)),
+                ("status", models.TextField(default="pending_supervisor")),
+                ("supervisor_id", models.BigIntegerField(blank=True, null=True)),
+                ("sup_msg_id", models.IntegerField(blank=True, null=True)),
+                ("admin_msg_id", models.IntegerField(blank=True, null=True)),
+                ("sana", models.TextField()),
+                ("group_id", models.IntegerField(blank=True, null=True)),
+                ("agent_msg_id", models.IntegerField(blank=True, null=True)),
+            ],
+            options={"db_table": "sorovlar", "verbose_name": "So'rov", "verbose_name_plural": "So'rovlar"},
+        ),
+        migrations.CreateModel(
+            name="SupervisorGroup",
+            fields=[
+                ("supervisor_id", models.BigIntegerField(primary_key=True, serialize=False)),
+                ("group_chat_id", models.BigIntegerField()),
+            ],
+            options={"db_table": "supervisor_group", "verbose_name": "Supervisor guruh", "verbose_name_plural": "Supervisor guruhlar"},
+        ),
+        migrations.CreateModel(
+            name="AdminUser",
+            fields=[
+                ("user_id", models.BigIntegerField(primary_key=True, serialize=False)),
+            ],
+            options={"db_table": "admins", "verbose_name": "Admin", "verbose_name_plural": "Adminlar"},
+        ),
+        migrations.CreateModel(
+            name="AuditLog",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
+                ("user_id", models.BigIntegerField(blank=True, null=True)),
+                ("user_role", models.CharField(blank=True, max_length=50, null=True)),
+                ("action_type", models.CharField(blank=True, max_length=100, null=True)),
+                ("target", models.TextField(blank=True, null=True)),
+                ("old_value", models.TextField(blank=True, null=True)),
+                ("new_value", models.TextField(blank=True, null=True)),
+                ("status", models.CharField(blank=True, max_length=50, null=True)),
+                ("request_id", models.IntegerField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+            ],
+            options={"db_table": "audit_log", "ordering": ["-id"], "verbose_name": "Audit log", "verbose_name_plural": "Audit loglar"},
+        ),
+        migrations.CreateModel(
+            name="Instruksiya",
+            fields=[
+                ("lavozim", models.TextField(primary_key=True, serialize=False)),
+                ("matn", models.TextField(blank=True, null=True)),
+                ("media_type", models.TextField(blank=True, null=True)),
+                ("media_file_id", models.TextField(blank=True, null=True)),
+                ("updated_at", models.TextField(blank=True, null=True)),
+            ],
+            options={"db_table": "instruksiyalar", "verbose_name": "Instruksiya", "verbose_name_plural": "Instruksiyalar"},
+        ),
+    ]

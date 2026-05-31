@@ -1,6 +1,12 @@
 import os
 import sys
 
+# ── Django setup (modellar import bo'lishidan oldin) ──────────────
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "dusel.settings")
+import django
+django.setup()
+# ──────────────────────────────────────────────────────────────────
+
 # ── Startup diagnostics (runs before any import that can fail) ─────
 print("=== BOT STARTUP ===", flush=True)
 print(f"TOKEN      : {'SET' if os.environ.get('TOKEN') else '*** NOT SET ***'}", flush=True)
