@@ -389,14 +389,17 @@ async def _apply_slash_commands(bot) -> None:
 
     # Scope bo'yicha ajratish
     default_cmds: list[BotCommand] = []
-    admin_cmds:   list[BotCommand] = []
+    extra_admin:  list[BotCommand] = []
 
     for b in buyruqlar:
         cmd = BotCommand(b.buyruq, b.tavsif)
         if b.lavozim == "admin":
-            admin_cmds.append(cmd)
+            extra_admin.append(cmd)
         else:
             default_cmds.append(cmd)
+
+    # Admin hamma buyruqlarni ko'radi: umumiy + admin-only
+    admin_cmds = default_cmds + extra_admin
 
     # Fallback: DB bo'sh bo'lsa ham /start doim bo'lsin
     if not default_cmds:
@@ -407,10 +410,10 @@ async def _apply_slash_commands(bot) -> None:
     if not admin_cmds:
         admin_cmds = [
             BotCommand("start",       "Botni qayta ishga tushirish"),
+            BotCommand("instruksiya", "Botdan foydalanish yo'riqnomasi"),
             BotCommand("new_client",  "Yangi klient registratsiyasi"),
             BotCommand("klientlar",   "Klientlar ro'yxati"),
             BotCommand("add_admin",   "Yangi admin qo'shish"),
-            BotCommand("instruksiya", "Lavozimlar uchun yo'riqnoma boshqaruvi"),
         ]
 
     await bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())

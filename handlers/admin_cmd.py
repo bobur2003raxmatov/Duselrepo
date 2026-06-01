@@ -430,10 +430,13 @@ async def _send_tarix(send_fn, logs: list, filter_type: str = "all"):
             user_name   = ism or ("Admin" if u_id == ADMIN_ID else str(u_id))
             target_part = f" — {em(target)}" if target else ""
             try:
-                dt       = datetime.strptime(created_at[:19], "%Y-%m-%d %H:%M:%S")
-                time_str = dt.strftime("%d.%m.%Y %H:%M")
+                if hasattr(created_at, "strftime"):
+                    time_str = created_at.strftime("%d.%m.%Y %H:%M")
+                else:
+                    dt       = datetime.strptime(str(created_at)[:19], "%Y-%m-%d %H:%M:%S")
+                    time_str = dt.strftime("%d.%m.%Y %H:%M")
             except Exception:
-                time_str = (created_at or "")[:16]
+                time_str = str(created_at or "")[:16]
             text += (
                 f"{i}. 👤 *{em(user_name)}* ({role_lbl})\n"
                 f"   {icon} {label}{target_part}\n"
