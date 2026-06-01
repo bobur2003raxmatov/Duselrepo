@@ -161,16 +161,29 @@ def admin_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def tarix_filter_kb(active: str = "all") -> InlineKeyboardMarkup:
-    def _btn(label: str, ft: str) -> InlineKeyboardButton:
-        mark = "• " if ft == active else ""
+def tarix_filter_kb(active_role: str = "all", active_date: str = "all") -> InlineKeyboardMarkup:
+    def _rbtn(label: str, ft: str) -> InlineKeyboardButton:
+        mark = "• " if ft == active_role else ""
         return InlineKeyboardButton(f"{mark}{label}", callback_data=f"tarix_f_{ft}")
-    return InlineKeyboardMarkup([[
-        _btn("Barchasi",      "all"),
-        _btn("Agentlar",      "agent"),
-        _btn("Supervisorlar", "supervisor"),
-        _btn("Rad etilganlar","rejected"),
-    ]])
+
+    def _dbtn(label: str, ft: str) -> InlineKeyboardButton:
+        mark = "• " if ft == active_date else ""
+        return InlineKeyboardButton(f"{mark}{label}", callback_data=f"tarix_d_{ft}")
+
+    return InlineKeyboardMarkup([
+        [
+            _rbtn("Barchasi",       "all"),
+            _rbtn("Agentlar",       "agent"),
+            _rbtn("Supervisorlar",  "supervisor"),
+            _rbtn("Rad etilgan",    "rejected"),
+        ],
+        [
+            _dbtn("Bugun",          "today"),
+            _dbtn("Kecha",          "yesterday"),
+            _dbtn("Shu oy",         "this_month"),
+            _dbtn("O'tgan oy",      "last_month"),
+        ],
+    ])
 
 
 def reyting_menu_kb() -> InlineKeyboardMarkup:

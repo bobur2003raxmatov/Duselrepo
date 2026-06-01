@@ -969,15 +969,47 @@ async def insert_audit_log(user_id: int, user_role: str, action_type: str,
     )
 
 
-async def get_audit_logs(filter_type: str = "all", limit: int = 20) -> list:
+async def get_audit_logs(
+    filter_type: str = "all",
+    date_filter: str = "all",
+    limit: int = 30,
+) -> list:
+    from datetime import datetime as _dt, timedelta as _td
+    conditions = []
+    params: list = []
+
+    # ── Rol filteri ──────────────────────────────────────────────────
     if filter_type == "agent":
-        where = "WHERE a.user_role = 'agent'"
+        conditions.append("a.user_role = 'agent'")
     elif filter_type == "supervisor":
-        where = "WHERE a.user_role IN ('supervisor', 'filial_rahbari')"
+        conditions.append("a.user_role IN ('supervisor', 'filial_rahbari')")
     elif filter_type == "rejected":
-        where = "WHERE a.status = 'rejected'"
-    else:
-        where = ""
+        conditions.append("a.status = 'rejected'")
+
+    # ── Sana filteri ─────────────────────────────────────────────────
+    today = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if date_filter == "today":
+        conditions.append("a.created_at >= %s")
+        params.append(today.strftime("%Y-%m-%d %H:%M:%S"))
+    elif date_filter == "yesterday":
+        yesterday = today - _td(days=1)
+        conditions.append("a.created_at >= %s AND a.created_at < %s")
+        params += [yesterday.strftime("%Y-%m-%d %H:%M:%S"),
+                   today.strftime("%Y-%m-%d %H:%M:%S")]
+    elif date_filter == "this_month":
+        month_start = today.replace(day=1)
+        conditions.append("a.created_at >= %s")
+        params.append(month_start.strftime("%Y-%m-%d %H:%M:%S"))
+    elif date_filter == "last_month":
+        month_start = today.replace(day=1)
+        last_start  = (month_start - _td(days=1)).replace(day=1)
+        conditions.append("a.created_at >= %s AND a.created_at < %s")
+        params += [last_start.strftime("%Y-%m-%d %H:%M:%S"),
+                   month_start.strftime("%Y-%m-%d %H:%M:%S")]
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params.append(limit)
+
     return await _raw_all(f"""
         SELECT a.id, a.user_id, a.user_role, a.action_type, a.target,
                a.old_value, a.new_value, a.status, a.request_id, a.created_at,
@@ -986,7 +1018,7 @@ async def get_audit_logs(filter_type: str = "all", limit: int = 20) -> list:
         LEFT JOIN xodimlar x ON x.user_id = a.user_id
         {where}
         ORDER BY a.id DESC LIMIT %s
-    """, [limit])
+    """, params)
 
 
 # ── Instruksiyalar ────────────────────────────────────────────────────────────

@@ -413,12 +413,23 @@ _ROLE_LABEL   = {
 }
 
 
-async def _send_tarix(send_fn, logs: list, filter_type: str = "all"):
+_DATE_LABEL = {
+    "all":        "",
+    "today":      " | Bugun",
+    "yesterday":  " | Kecha",
+    "this_month": " | Shu oy",
+    "last_month": " | O'tgan oy",
+}
+
+
+async def _send_tarix(send_fn, logs: list,
+                      filter_type: str = "all", date_filter: str = "all"):
     from keyboards import tarix_filter_kb
+    date_lbl = _DATE_LABEL.get(date_filter, "")
     if not logs:
-        text = "📋 *O'zgarishlar tarixi bo'sh.*"
+        text = f"📋 *O'zgarishlar tarixi bo'sh.*{date_lbl}"
     else:
-        text = "📋 *O'zgarishlar tarixi*\n\n"
+        text = f"📋 *O'zgarishlar tarixi*{date_lbl}\n\n"
         for i, row in enumerate(logs, 1):
             (_, u_id, u_role, action, target,
              old_v, new_v, status, req_id, created_at, ism) = row
@@ -443,14 +454,16 @@ async def _send_tarix(send_fn, logs: list, filter_type: str = "all"):
                 f"   🕐 {time_str}\n"
                 f"   {s_icon} {s_label}\n\n"
             )
-    await send_fn(text, parse_mode="Markdown", reply_markup=tarix_filter_kb(filter_type))
+    await send_fn(text, parse_mode="Markdown",
+                  reply_markup=tarix_filter_kb(filter_type, date_filter))
 
 
 @admin_only
 async def admin_tarix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filter_type = context.user_data.get("tarix_filter", "all")
-    logs = await db.get_audit_logs(filter_type=filter_type)
-    await _send_tarix(update.message.reply_text, logs, filter_type)
+    date_filter = context.user_data.get("tarix_date",   "all")
+    logs = await db.get_audit_logs(filter_type=filter_type, date_filter=date_filter)
+    await _send_tarix(update.message.reply_text, logs, filter_type, date_filter)
 
 
 async def tarix_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -458,8 +471,18 @@ async def tarix_filter_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     if not await db.is_admin(query.from_user.id):
         return
-    parts = query.data.split("_", 2)  # tarix_f_<filter>
-    filter_type = parts[2] if len(parts) == 3 else "all"
-    context.user_data["tarix_filter"] = filter_type
-    logs = await db.get_audit_logs(filter_type=filter_type)
-    await _send_tarix(query.edit_message_text, logs, filter_type)
+
+    data = query.data  # tarix_f_<role> yoki tarix_d_<date>
+    if data.startswith("tarix_f_"):
+        context.user_data["tarix_filter"] = data[len("tarix_f_"):]
+    elif data.startswith("tarix_d_"):
+        # ikkinchi marta bosish → filter o'chirilsin (all ga qaytsin)
+        new_date = data[len("tarix_d_"):]
+        if context.user_data.get("tarix_date") == new_date:
+            new_date = "all"
+        context.user_data["tarix_date"] = new_date
+
+    filter_type = context.user_data.get("tarix_filter", "all")
+    date_filter = context.user_data.get("tarix_date",   "all")
+    logs = await db.get_audit_logs(filter_type=filter_type, date_filter=date_filter)
+    await _send_tarix(query.edit_message_text, logs, filter_type, date_filter)

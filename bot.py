@@ -355,7 +355,7 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(_faq_f, faq_start))
     app.add_handler(MessageHandler(_matn_javob_f, matn_javob_handler))
     app.add_handler(CallbackQueryHandler(sorov_sup_callback, pattern=r"^sorov_appr_|^sorov_rej_|^sorov_done_|^sorov_rad_"))
-    app.add_handler(CallbackQueryHandler(tarix_filter_callback, pattern=r"^tarix_f_"))
+    app.add_handler(CallbackQueryHandler(tarix_filter_callback, pattern=r"^tarix_[fd]_"))
     app.add_handler(CallbackQueryHandler(batch_callback, pattern=r"^batch_"))
     app.add_handler(CallbackQueryHandler(faq_callback, pattern=r"^faq_"))
     app.add_handler(CallbackQueryHandler(callback_handler))
