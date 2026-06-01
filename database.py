@@ -972,7 +972,8 @@ async def insert_audit_log(user_id: int, user_role: str, action_type: str,
 async def get_audit_logs(
     filter_type: str = "all",
     date_filter: str = "all",
-    limit: int = 30,
+    limit: int = 15,
+    offset: int = 0,
 ) -> list:
     from datetime import datetime as _dt, timedelta as _td
     conditions = []
@@ -1008,7 +1009,7 @@ async def get_audit_logs(
                    month_start.strftime("%Y-%m-%d %H:%M:%S")]
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    params.append(limit)
+    params += [limit + 1, offset]   # +1 → keyingi sahifa bor-yo'qligini bilish uchun
 
     return await _raw_all(f"""
         SELECT a.id, a.user_id, a.user_role, a.action_type, a.target,
@@ -1017,7 +1018,7 @@ async def get_audit_logs(
         FROM audit_log a
         LEFT JOIN xodimlar x ON x.user_id = a.user_id
         {where}
-        ORDER BY a.id DESC LIMIT %s
+        ORDER BY a.id DESC LIMIT %s OFFSET %s
     """, params)
 
 

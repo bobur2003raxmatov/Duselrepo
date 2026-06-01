@@ -161,7 +161,12 @@ def admin_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def tarix_filter_kb(active_role: str = "all", active_date: str = "all") -> InlineKeyboardMarkup:
+def tarix_filter_kb(
+    active_role: str = "all",
+    active_date: str = "all",
+    page: int = 0,
+    has_next: bool = False,
+) -> InlineKeyboardMarkup:
     def _rbtn(label: str, ft: str) -> InlineKeyboardButton:
         mark = "• " if ft == active_role else ""
         return InlineKeyboardButton(f"{mark}{label}", callback_data=f"tarix_f_{ft}")
@@ -170,20 +175,30 @@ def tarix_filter_kb(active_role: str = "all", active_date: str = "all") -> Inlin
         mark = "• " if ft == active_date else ""
         return InlineKeyboardButton(f"{mark}{label}", callback_data=f"tarix_d_{ft}")
 
-    return InlineKeyboardMarkup([
+    rows = [
         [
-            _rbtn("Barchasi",       "all"),
-            _rbtn("Agentlar",       "agent"),
-            _rbtn("Supervisorlar",  "supervisor"),
-            _rbtn("Rad etilgan",    "rejected"),
+            _rbtn("Barchasi",      "all"),
+            _rbtn("Agentlar",      "agent"),
+            _rbtn("Supervisorlar", "supervisor"),
+            _rbtn("Rad etilgan",   "rejected"),
         ],
         [
-            _dbtn("Bugun",          "today"),
-            _dbtn("Kecha",          "yesterday"),
-            _dbtn("Shu oy",         "this_month"),
-            _dbtn("O'tgan oy",      "last_month"),
+            _dbtn("Bugun",         "today"),
+            _dbtn("Kecha",         "yesterday"),
+            _dbtn("Shu oy",        "this_month"),
+            _dbtn("O'tgan oy",     "last_month"),
         ],
-    ])
+    ]
+    # Pagination qatori
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"tarix_p_{page - 1}"))
+    nav.append(InlineKeyboardButton(f"📄 {page + 1}-sahifa", callback_data="tarix_noop"))
+    if has_next:
+        nav.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"tarix_p_{page + 1}"))
+    rows.append(nav)
+
+    return InlineKeyboardMarkup(rows)
 
 
 def reyting_menu_kb() -> InlineKeyboardMarkup:

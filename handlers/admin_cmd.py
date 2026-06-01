@@ -422,15 +422,21 @@ _DATE_LABEL = {
 }
 
 
-async def _send_tarix(send_fn, logs: list,
-                      filter_type: str = "all", date_filter: str = "all"):
+PAGE_SIZE = 15
+
+
+async def _send_tarix(send_fn, logs: list, filter_type: str = "all",
+                      date_filter: str = "all", page: int = 0):
     from keyboards import tarix_filter_kb
-    date_lbl = _DATE_LABEL.get(date_filter, "")
-    if not logs:
+    date_lbl  = _DATE_LABEL.get(date_filter, "")
+    has_next  = len(logs) > PAGE_SIZE
+    page_logs = logs[:PAGE_SIZE]
+
+    if not page_logs:
         text = f"📋 *O'zgarishlar tarixi bo'sh.*{date_lbl}"
     else:
         text = f"📋 *O'zgarishlar tarixi*{date_lbl}\n\n"
-        for i, row in enumerate(logs, 1):
+        for i, row in enumerate(page_logs, page * PAGE_SIZE + 1):
             (_, u_id, u_role, action, target,
              old_v, new_v, status, req_id, created_at, ism) = row
             icon        = _ACTION_ICON.get(action, "📌")
@@ -454,16 +460,21 @@ async def _send_tarix(send_fn, logs: list,
                 f"   🕐 {time_str}\n"
                 f"   {s_icon} {s_label}\n\n"
             )
-    await send_fn(text, parse_mode="Markdown",
-                  reply_markup=tarix_filter_kb(filter_type, date_filter))
+    await send_fn(
+        text,
+        parse_mode="Markdown",
+        reply_markup=tarix_filter_kb(filter_type, date_filter, page, has_next),
+    )
 
 
 @admin_only
 async def admin_tarix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["tarix_page"] = 0
     filter_type = context.user_data.get("tarix_filter", "all")
     date_filter = context.user_data.get("tarix_date",   "all")
-    logs = await db.get_audit_logs(filter_type=filter_type, date_filter=date_filter)
-    await _send_tarix(update.message.reply_text, logs, filter_type, date_filter)
+    logs = await db.get_audit_logs(filter_type=filter_type, date_filter=date_filter,
+                                   offset=0)
+    await _send_tarix(update.message.reply_text, logs, filter_type, date_filter, 0)
 
 
 async def tarix_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -472,17 +483,25 @@ async def tarix_filter_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not await db.is_admin(query.from_user.id):
         return
 
-    data = query.data  # tarix_f_<role> yoki tarix_d_<date>
+    data = query.data
+    if data == "tarix_noop":
+        return
+
     if data.startswith("tarix_f_"):
         context.user_data["tarix_filter"] = data[len("tarix_f_"):]
+        context.user_data["tarix_page"]   = 0
     elif data.startswith("tarix_d_"):
-        # ikkinchi marta bosish → filter o'chirilsin (all ga qaytsin)
         new_date = data[len("tarix_d_"):]
         if context.user_data.get("tarix_date") == new_date:
             new_date = "all"
         context.user_data["tarix_date"] = new_date
+        context.user_data["tarix_page"] = 0
+    elif data.startswith("tarix_p_"):
+        context.user_data["tarix_page"] = int(data[len("tarix_p_"):])
 
     filter_type = context.user_data.get("tarix_filter", "all")
     date_filter = context.user_data.get("tarix_date",   "all")
-    logs = await db.get_audit_logs(filter_type=filter_type, date_filter=date_filter)
-    await _send_tarix(query.edit_message_text, logs, filter_type, date_filter)
+    page        = context.user_data.get("tarix_page",   0)
+    logs = await db.get_audit_logs(filter_type=filter_type, date_filter=date_filter,
+                                   offset=page * PAGE_SIZE)
+    await _send_tarix(query.edit_message_text, logs, filter_type, date_filter, page)
