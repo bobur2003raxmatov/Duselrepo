@@ -7,6 +7,7 @@ O'zgarishlar 30 soniya ichida botga avtomatik yuklanadi.
 
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from ..models import BotMenuRol, BotTugma, BotSlashBuyruq, FaqKategoriya, Faq
 
 
@@ -44,7 +45,7 @@ class BotMenuRolAdmin(admin.ModelAdmin):
             )
             for r in sorted(rows)
         ]
-        return format_html(" &nbsp;→&nbsp; ".join(parts))
+        return mark_safe(" &nbsp;→&nbsp; ".join(parts))
     tugmalar_display.short_description = "Tugmalar (qatorlar bo'yicha)"
 
 
