@@ -548,6 +548,31 @@ async def delete_faq_kategoriya(kategoriya_id: int):
     await FaqKategoriya.objects.filter(pk=kategoriya_id).adelete()
 
 
+# ── Bot menyular ──────────────────────────────────────────────────────────────
+async def get_all_active_tugmalar() -> list:
+    """Barcha faol BotTugma yozuvlarini qaytaradi (rol bilan birga)."""
+    from bot_app.models import BotTugma
+    return [
+        t async for t in
+        BotTugma.objects.select_related("rol").filter(faol=True, rol__faol=True).order_by("rol__lavozim", "qator", "ustun")
+    ]
+
+
+async def get_tugma_by_matn(matn: str) -> object | None:
+    """Matn bo'yicha faol BotTugma ni qaytaradi."""
+    from bot_app.models import BotTugma
+    try:
+        return await BotTugma.objects.select_related("rol").aget(matn=matn, faol=True, rol__faol=True)
+    except BotTugma.DoesNotExist:
+        return None
+
+
+async def get_all_slash_buyruqlar() -> list:
+    """Barcha faol BotSlashBuyruq larni qaytaradi."""
+    from bot_app.models import BotSlashBuyruq
+    return [b async for b in BotSlashBuyruq.objects.filter(faol=True).order_by("tartib", "buyruq")]
+
+
 # ── Urgency ───────────────────────────────────────────────────────────────────
 async def set_urgency(group_id: int, urgency: str):
     (_, _, XabarGuruhi, *_) = _models()

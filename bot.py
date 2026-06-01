@@ -106,7 +106,10 @@ from handlers import (
     admin_instruksiya_edit_cb,
     admin_instruksiya_del_cb,
     admin_instruksiya_matn_save,
+    faq_start, faq_callback,
+    matn_javob_handler,
 )
+from handlers.menu_dispatch import BuyruqFilter
 print("handlers imported OK", flush=True)
 
 from sorov_handlers import (
@@ -216,10 +219,11 @@ def build_application() -> Application:
     )
 
     # ── Klient registratsiya ConversationHandler (16 qadam) ──────
+    _klient_f = BuyruqFilter("yangi_klient", defaults=("🏪 Yangi Klient",))
+    _dokon_f  = BuyruqFilter("dokon_qoshish", defaults=("🏪 Dokon qo'shish",))
     klient_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^🏪 Yangi Klient$"),   new_client_command),
-            MessageHandler(filters.Regex(r"^🏪 Dokon qo'shish$"), new_client_command),
+            MessageHandler(_klient_f | _dokon_f, new_client_command),
             CommandHandler("new_client", new_client_command),
         ],
         states={
@@ -252,11 +256,9 @@ def build_application() -> Application:
     )
 
     # ── So'rov ConversationHandler (agent/FR/supervisor requests) ──
+    _sorov_f = BuyruqFilter("sorov", defaults=("❓ So'rov", "📝 Muammo yozish"))
     sorov_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex(r"^❓ So'rov$"),       sorov_start),
-            MessageHandler(filters.Regex(r"^📝 Muammo yozish$"), sorov_start),
-        ],
+        entry_points=[MessageHandler(_sorov_f, sorov_start)],
         states={
             SOROV_TUR:  [CallbackQueryHandler(sorov_tur_olish, pattern="^sorov_tur_")],
             SOROV_DOKON: [
@@ -277,10 +279,9 @@ def build_application() -> Application:
     )
 
     # ── Limit qo'shish ConversationHandler (Filial Rahbari) ─────
+    _limit_f = BuyruqFilter("limit", defaults=("💰 Limit qo'shish",))
     limit_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex(r"^💰 Limit qo'shish$"), limit_start),
-        ],
+        entry_points=[MessageHandler(_limit_f, limit_start)],
         states={
             LIMIT_DOKON: [MessageHandler(filters.TEXT & ~filters.COMMAND, limit_dokon_olish)],
             LIMIT_SUMMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, limit_summa_olish)],
@@ -349,9 +350,14 @@ def build_application() -> Application:
         topic_closed_handler,
     ))
 
+    _faq_f       = BuyruqFilter("faq", defaults=("📋 FAQ",))
+    _matn_javob_f = BuyruqFilter("matn_javob")
+    app.add_handler(MessageHandler(_faq_f, faq_start))
+    app.add_handler(MessageHandler(_matn_javob_f, matn_javob_handler))
     app.add_handler(CallbackQueryHandler(sorov_sup_callback, pattern=r"^sorov_appr_|^sorov_rej_|^sorov_done_|^sorov_rad_"))
     app.add_handler(CallbackQueryHandler(tarix_filter_callback, pattern=r"^tarix_f_"))
     app.add_handler(CallbackQueryHandler(batch_callback, pattern=r"^batch_"))
+    app.add_handler(CallbackQueryHandler(faq_callback, pattern=r"^faq_"))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Chat(GROUP_CHAT_ID) & ~filters.COMMAND, admin_guruh_javob))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, xodim_chat_handler))
@@ -369,31 +375,76 @@ def build_application() -> Application:
     return app
 
 
-async def post_init(app: Application):
-    await init_db()
-    logger.info("✅ Ma'lumotlar bazasi tayyor.")
+async def _apply_slash_commands(bot) -> None:
+    """DB dagi BotSlashBuyruq lardan Telegram slash buyruqlarini yangilaydi."""
     from telegram import BotCommandScopeDefault, BotCommandScopeChat
+    from database import get_all_slash_buyruqlar
     from config import ADMIN_ID as _ADMIN_ID
-    # Barcha foydalanuvchilar faqat /start va /instruksiya ko'radi
-    # (/cancel ko'rinmaydi — /start avtomatik bekor qiladi)
-    await app.bot.set_my_commands(
-        [
+
+    try:
+        buyruqlar = await get_all_slash_buyruqlar()
+    except Exception as e:
+        logger.warning(f"Slash buyruqlarni DBdan olishda xato: {e}")
+        buyruqlar = []
+
+    # Scope bo'yicha ajratish
+    default_cmds: list[BotCommand] = []
+    admin_cmds:   list[BotCommand] = []
+
+    for b in buyruqlar:
+        cmd = BotCommand(b.buyruq, b.tavsif)
+        if b.lavozim == "admin":
+            admin_cmds.append(cmd)
+        else:
+            default_cmds.append(cmd)
+
+    # Fallback: DB bo'sh bo'lsa ham /start doim bo'lsin
+    if not default_cmds:
+        default_cmds = [
             BotCommand("start",       "Botni qayta ishga tushirish"),
             BotCommand("instruksiya", "Botdan foydalanish yo'riqnomasi"),
-        ],
-        scope=BotCommandScopeDefault(),
-    )
-    # Admin ham /new_client ko'radi
-    await app.bot.set_my_commands(
-        [
+        ]
+    if not admin_cmds:
+        admin_cmds = [
             BotCommand("start",       "Botni qayta ishga tushirish"),
             BotCommand("new_client",  "Yangi klient registratsiyasi"),
             BotCommand("klientlar",   "Klientlar ro'yxati"),
             BotCommand("add_admin",   "Yangi admin qo'shish"),
             BotCommand("instruksiya", "Lavozimlar uchun yo'riqnoma boshqaruvi"),
-        ],
-        scope=BotCommandScopeChat(chat_id=_ADMIN_ID),
-    )
+        ]
+
+    await bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
+    await bot.set_my_commands(admin_cmds,   scope=BotCommandScopeChat(chat_id=_ADMIN_ID))
+    logger.info(f"✅ Slash buyruqlar yangilandi: {len(default_cmds)} umumiy, {len(admin_cmds)} admin.")
+
+
+async def refresh_menus_job(context) -> None:
+    """Har 30 soniyada DB dan menyu keshi va slash buyruqlarni yangilaydi."""
+    from database import get_all_active_tugmalar
+    from handlers.menu_dispatch import refresh_menu_cache
+    try:
+        tugmalar = await get_all_active_tugmalar()
+        refresh_menu_cache(tugmalar)
+        await _apply_slash_commands(context.bot)
+    except Exception as e:
+        logger.warning(f"[refresh_menus_job] xato: {e}")
+
+
+async def post_init(app: Application):
+    await init_db()
+    logger.info("✅ Ma'lumotlar bazasi tayyor.")
+
+    # ── Bot menyu keshi + slash buyruqlarini yuklash ──────────────────────────
+    try:
+        from database import get_all_active_tugmalar
+        from handlers.menu_dispatch import refresh_menu_cache
+        tugmalar = await get_all_active_tugmalar()
+        refresh_menu_cache(tugmalar)
+        logger.info(f"✅ Bot menyu keshi yuklandi: {len(tugmalar)} ta tugma.")
+    except Exception as e:
+        logger.warning(f"Bot menyu keshini yuklashda xato: {e}")
+
+    await _apply_slash_commands(app.bot)
     # General topicda faqat adminlar yoza olsin
     try:
         await app.bot.set_chat_permissions(
@@ -438,6 +489,14 @@ async def post_init(app: Application):
         first=300,
     )
     logger.info("✅ Kutilayotgan so'rovlar tekshiruvi rejalashtirildi: har 5 daqiqa")
+
+    # Menyu keshi + slash buyruqlarini har 30 soniyada yangilash
+    app.job_queue.run_repeating(
+        refresh_menus_job,
+        interval=30,
+        first=30,
+    )
+    logger.info("✅ Menyu avtomatik yangilanishi rejalashtirildi: har 30 soniya")
 
 
 async def error_handler(update: object, context) -> None:

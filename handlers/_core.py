@@ -83,10 +83,18 @@ def rate_limited(uid: int) -> bool:
     _last_msg_time[uid] = now
     return False
 
-_YUBORISH_BTN = "📤 Yuborish"
-
-def _yuborish_kb():
-    return ReplyKeyboardMarkup([[_YUBORISH_BTN]], resize_keyboard=True)
+def _msg_ctype(msg) -> str:
+    if msg.photo:      return "📷 Rasm"
+    if msg.video:      return "🎥 Video"
+    if msg.voice:      return "🎙 Ovoz"
+    if msg.video_note: return "⭕ Video-xabar"
+    if msg.document:   return "📄 Fayl"
+    if msg.audio:      return "🎵 Audio"
+    if msg.sticker:    return "🎭 Sticker"
+    if msg.location:   return "📍 Lokatsiya"
+    if msg.contact:    return "📱 Kontakt"
+    if msg.text:       return "💬 Matn"
+    return "💬 Xabar"
 
 
 def em(text) -> str:
@@ -593,7 +601,7 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if await db.is_admin(uid):
         return
 
-    # Ro'yxatdan o'tish, klient yoki so'rov oqimida bo'lsa o'tkazib yuborish
+    # Conversation oqimida bo'lsa o'tkazib yuborish
     if any(k in context.user_data for k in ("ism", "lavozim", "kod", "filial", "klient_data", "sorov_data", "limit_data")):
         return
 
@@ -609,63 +617,66 @@ async def xodim_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if status == "pending":
         await msg.reply_text("⏳ Profilingiz tasdiqlanishini kuting.")
         return
-
-    # ── "📤 Yuborish" tugmasi bosildi — bufer yuboriladi ─────────
-    if msg.text == _YUBORISH_BTN:
-        buf = context.user_data.pop("msg_buffer", [])
-        if not buf:
-            await msg.reply_text("❌ Yuborish uchun xabar yo'q.", reply_markup=_role_keyboard(lavozim))
-            return
-        await _send_buffered(context, msg, uid, ism, lavozim, filial, topic_id, buf)
-        return
-
-    # ── Flood himoya ──────────────────────────────────────────────
     if rate_limited(uid):
         return
 
-    # ── Barcha xabar turlarini buferlash ─────────────────────────
-    if msg.photo:
-        entry = {"type": "photo", "msg_id": msg.message_id, "chat_id": msg.chat_id,
-                 "file_id": msg.photo[-1].file_id, "caption": msg.caption}
-        ctype = "📷 Rasm"
-    elif msg.video:
-        entry = {"type": "video", "msg_id": msg.message_id, "chat_id": msg.chat_id,
-                 "file_id": msg.video.file_id, "caption": msg.caption}
-        ctype = "🎥 Video"
-    elif msg.location:
-        entry = {"type": "location", "msg_id": msg.message_id, "chat_id": msg.chat_id,
-                 "lat": msg.location.latitude, "lon": msg.location.longitude}
-        ctype = "📍 Lokatsiya"
-    elif msg.text:
-        entry = {"type": "text", "msg_id": msg.message_id, "chat_id": msg.chat_id, "text": msg.text}
-        ctype = "💬 Matn"
-    elif msg.document:
-        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
-        ctype = "📄 Fayl"
-    elif msg.voice:
-        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
-        ctype = "🎙 Ovozli xabar"
-    elif msg.video_note:
-        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
-        ctype = "⭕ Video-xabar"
-    elif msg.sticker:
-        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
-        ctype = "🎭 Sticker"
-    else:
-        entry = {"type": "other", "msg_id": msg.message_id, "chat_id": msg.chat_id}
-        ctype = "💬 Xabar"
+    # Tasdiqlangan lekin topic_id yo'q → avtomatik yaratish
+    if not topic_id:
+        try:
+            role_txt = f"{lavozim} ({kod})" if kod and kod != "KOD YO'Q" else lavozim
+            topic = await context.bot.create_forum_topic(
+                chat_id=GROUP_CHAT_ID,
+                name=f"{ism} — {role_txt} | {filial}",
+            )
+            topic_id = topic.message_thread_id
+            await db.approve_xodim(uid, topic_id)
+        except Exception as e:
+            logger.warning(f"Topic avtomatik yaratishda xato (uid={uid}): {e}")
+            await msg.reply_text("❌ Shaxsiy mavzungiz yo'q. Admin bilan bog'laning.")
+            return
 
-    entry["ctype"] = ctype
-    buf = context.user_data.setdefault("msg_buffer", [])
-    buf.append(entry)
-    if len(buf) == 1:
-        await msg.reply_text(
-            f"✅ {ctype} qo'shildi. Yana qo'shishingiz mumkin yoki \"📤 Yuborish\" tugmasini bosing:",
-            reply_markup=_yuborish_kb(),
+    # Agar xodim admin javobiga reply qilayotgan bo'lsa — topicda ham reply qilish
+    reply_to_group_msg_id = None
+    if msg.reply_to_message:
+        reply_to_group_msg_id = await db.get_group_msg_id_by_private(
+            uid, msg.reply_to_message.message_id
         )
-    else:
-        await msg.reply_text(f"✅ {len(buf)}-xabar qo'shildi ({ctype}).")
-    return
+
+    thread_kwargs = {"message_thread_id": topic_id}
+
+    try:
+        sent = await context.bot.copy_message(
+            chat_id=GROUP_CHAT_ID,
+            from_chat_id=msg.chat_id,
+            message_id=msg.message_id,
+            reply_to_message_id=reply_to_group_msg_id,
+            allow_sending_without_reply=True,
+            **thread_kwargs,
+        )
+        xabar_id = await db.insert_xabar(uid, ism, filial, _msg_ctype(msg), msg.message_id)
+        await db.update_xabar_group_fwd_id(xabar_id, sent.message_id)
+
+    except BadRequest as e:
+        err = str(e).lower()
+        if "message thread not found" in err or "topic" in err or "thread" in err:
+            await db.reset_topic(uid)
+            await msg.reply_text(
+                "⚠️ Guruhdagi mavzungiz o'chirilgan. Admin qayta tasdiqlashini kuting.",
+                reply_markup=_role_keyboard(lavozim),
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=f"🔄 *Mavzusi o'chirilgan xodim:*\n\n👤 {em(ism)} | {em(lavozim)}",
+                    parse_mode="Markdown",
+                    reply_markup=tasdiq_inline(uid),
+                )
+            except Exception:
+                pass
+        else:
+            logger.warning(f"Xabarni topicga yuborishda xato (uid={uid}): {e}")
+    except Exception as e:
+        logger.warning(f"Xabarni topicga yuborishda xato (uid={uid}): {e}")
 
 
 # ══════════════════════════════════════════════
@@ -3430,3 +3441,20 @@ async def topic_closed_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
     except Exception as e:
         logger.warning(f"Xodimga xabar yuborishda xato (user_id={user_id}): {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BACKWARDS COMPATIBILITY RE-EXPORTS
+# Yangi fayllar (handlers/_shared.py, register.py, chat.py, va h.k.) yaratildi.
+# Eski import lar ishlashda davom etsin deb barcha nomlar shu yerdan ham
+# import qilinishi mumkin.  bot.py va boshqa fayllar handlers/__init__.py
+# orqali import qiladi, shuning uchun bu faylni o'zgartirish shart emas.
+# ══════════════════════════════════════════════════════════════════════════════
+from handlers._shared import *
+from handlers.register import *
+from handlers.chat import *
+from handlers.admin_cmd import *
+from handlers.instruksiya import *
+from handlers.biriktirish import *
+from handlers.klient import *
+from handlers.callbacks import *

@@ -115,6 +115,25 @@ def _elapsed(sana_str: str) -> str:
         return "—"
 
 
+async def _ensure_topic_id(context, uid: int, user_row: tuple) -> int | None:
+    """topic_id yo'q bo'lsa avtomatik yaratadi va DBga saqlaydi."""
+    topic_id = user_row[1]  # get_xodim: (status, topic_id, ism, lavozim, filial, kod)
+    if topic_id:
+        return topic_id
+    ism, lavozim, filial, kod = user_row[2], user_row[3], user_row[4], user_row[5]
+    try:
+        role_txt = f"{lavozim} ({kod})" if kod and kod != "KOD YO'Q" else lavozim
+        topic = await context.bot.create_forum_topic(
+            chat_id=GROUP_CHAT_ID,
+            name=f"{ism} — {role_txt} | {filial}",
+        )
+        await db.approve_xodim(uid, topic.message_thread_id)
+        return topic.message_thread_id
+    except Exception as e:
+        logger.warning(f"Topic avtomatik yaratishda xato (uid={uid}): {e}")
+        return None
+
+
 async def _resolve_group(uid: int, lavozim: str) -> tuple:
     """Return (supervisor_id, group_chat_id) for the given user.
 
@@ -668,11 +687,17 @@ async def sorov_tur_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def sorov_dokon_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _rate_limited(update.effective_user.id):
         return SOROV_DOKON
+    if "sorov_data" not in context.user_data:
+        await update.message.reply_text("❗ Sessiya tugagan. /start bilan qaytadan boshlang.")
+        return ConversationHandler.END
     context.user_data["sorov_data"]["dokon_nomi"] = update.message.text.strip()
     return await _sorov_dokon_next(update, context)
 
 
 async def sorov_dokon_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if "sorov_data" not in context.user_data:
+        await update.message.reply_text("❗ Sessiya tugagan. /start bilan qaytadan boshlang.")
+        return ConversationHandler.END
     photo = update.message.photo[-1]  # eng yuqori sifatli
     context.user_data["sorov_data"]["dokon_nomi"] = f"PHOTO:{photo.file_id}"
     return await _sorov_dokon_next(update, context)
@@ -709,6 +734,9 @@ async def sorov_lok_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SOROV_LOK
 
+    if "sorov_data" not in context.user_data:
+        await update.message.reply_text("❗ Sessiya tugagan. /start bilan qaytadan boshlang.")
+        return ConversationHandler.END
     loc = update.message.location
     context.user_data["sorov_data"]["lat"] = loc.latitude
     context.user_data["sorov_data"]["lon"] = loc.longitude
@@ -748,6 +776,9 @@ async def sorov_tel_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• 901234567\n• 0901234567\n• 998901234567\n• +998901234567\n\nQayta kiriting:"
         )
         return SOROV_TEL
+    if "sorov_data" not in context.user_data:
+        await update.message.reply_text("❗ Sessiya tugagan. /start bilan qaytadan boshlang.")
+        return ConversationHandler.END
     context.user_data["sorov_data"]["yangi_qiymat"] = phone
     return await _show_agent_preview(update, context)
 
@@ -760,6 +791,9 @@ async def sorov_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
         await update.message.reply_text("❌ Iltimos, rasm yuboring.")
         return SOROV_FOTO
+    if "sorov_data" not in context.user_data:
+        await update.message.reply_text("❗ Sessiya tugagan. /start bilan qaytadan boshlang.")
+        return ConversationHandler.END
 
     fotolar = context.user_data["sorov_data"].setdefault("fotolar", [])
     fotolar.append(update.message.photo[-1].file_id)
@@ -790,6 +824,9 @@ async def sorov_foto_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════
 
 async def sorov_izoh_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if "sorov_data" not in context.user_data:
+        await update.message.reply_text("❗ Sessiya tugagan. /start bilan qaytadan boshlang.")
+        return ConversationHandler.END
     context.user_data["sorov_data"]["izoh"] = update.message.text.strip()
     return await _show_agent_preview(update, context)
 
@@ -886,11 +923,37 @@ async def _enter_batch_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return SOROV_BATCH_COLLECT
 
 
+async def _media_group_notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Media group yig'ilgandan so'ng bitta umumiy xabar yuboradi."""
+    data = context.job.data
+    uid = data["uid"]
+    batch = data["batch"]
+    counts = []
+    if batch.get("messages"): counts.append(f"💬 {len(batch['messages'])}")
+    if batch.get("photos"):   counts.append(f"🖼 {len(batch['photos'])}")
+    if batch.get("files"):    counts.append(f"📎 {len(batch['files'])}")
+    if batch.get("voices"):   counts.append(f"🎙 {len(batch['voices'])}")
+    if batch.get("videos"):   counts.append(f"🎥 {len(batch['videos'])}")
+    if batch.get("location"): counts.append("📍 1")
+    try:
+        from keyboards import batch_collect_kb as _bck
+        await context.bot.send_message(
+            chat_id=uid,
+            text=f"✅ Qabul qilindi \\({', '.join(counts) or '0'}\\)\n"
+                 f"_Tayyor bo'lgach '📤 Yuborish' bosing\\._",
+            parse_mode="MarkdownV2",
+            reply_markup=_bck(),
+        )
+    except Exception:
+        pass
+
+
 async def batch_collect_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Accepts all incoming content in collection mode."""
     msg = update.message
     uid = update.effective_user.id
-    if _rate_limited(uid):
+    # Media group da kelgan rasmlar/videolar rate limit dan o'tkaziladi
+    if not msg.media_group_id and _rate_limited(uid):
         return SOROV_BATCH_COLLECT
 
     if msg.text and msg.text.strip() == "📤 Yuborish":
@@ -916,6 +979,21 @@ async def batch_collect_handler(update: Update, context: ContextTypes.DEFAULT_TY
         batch["location"] = {"lat": msg.location.latitude, "lon": msg.location.longitude}
 
     _reschedule_batch_timer(context, uid)
+
+    # Media group rasmlar uchun alohida reply yubormaymiz — oxirgi rasm kelgach bir marта ko'rsatiladi
+    if msg.media_group_id:
+        # Job bilan kechiktirib bitta umumiy xabar yuborish
+        job_name = f"mg_notify_{uid}_{msg.media_group_id}"
+        for job in context.job_queue.get_jobs_by_name(job_name):
+            job.schedule_removal()
+        context.job_queue.run_once(
+            _media_group_notify_job,
+            when=1.2,
+            data={"uid": uid, "batch": batch},
+            name=job_name,
+            chat_id=msg.chat_id,
+        )
+        return SOROV_BATCH_COLLECT
 
     counts = []
     if batch["messages"]: counts.append(f"💬 {len(batch['messages'])}")
@@ -1186,9 +1264,7 @@ async def _do_submit_batch(uid: int, user_data: dict, context: ContextTypes.DEFA
             except Exception as e:
                 logger.warning(f"Ovoz yuborishda xato: {e}")
 
-    user_row_batch = await db.get_xodim(uid)
-    batch_topic_id = user_row_batch[1] if user_row_batch else None
-    thread_b = {"message_thread_id": batch_topic_id} if batch_topic_id else {}
+    thread_b = {}
 
     sent_ok = False
     try:
@@ -1456,19 +1532,16 @@ async def _finish_sorov(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Audit log yozishda xato (_finish_sorov): {_e}")
     # ─────────────────────────────────────────────────────────────
 
-    user_row = await db.get_xodim(uid)
-    agent_topic_id = user_row[1] if user_row else None
-
     sent_ok = False
     if lavozim == "Agent":
         if supervisor_id:
             await _send_to_supervisor(context, sorov_id, data, ism, supervisor_id)
             sent_ok = True
         else:
-            await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, agent_topic_id, user_id=uid)
+            await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, None, user_id=uid)
             sent_ok = True
     else:  # FR, Supervisor
-        await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, agent_topic_id, user_id=uid)
+        await _post_to_group(context, sorov_id, data, ism, GROUP_CHAT_ID, None, user_id=uid)
         sent_ok = True
 
     if sent_ok:
@@ -1507,7 +1580,7 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     sorov = await db.get_sorov(sorov_id)
     if not sorov:
-        await query.edit_message_text("❌ So'rov topilmadi.")
+        await _safe_edit(query, "❌ So'rov topilmadi.")
         return
 
     # cols: id[0] agent_id[1] agent_ism[2] tur[3] dokon_nomi[4] yangi_qiymat[5]
@@ -1612,11 +1685,9 @@ async def sorov_sup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         group_chat_id = await db.get_supervisor_group(sup_uid) or GROUP_CHAT_ID
         logger.info(f"[APPR] sorov_id={sorov_id} sup_uid={sup_uid} group_chat_id={group_chat_id}")
 
-        agent_row_for_topic = await db.get_xodim(agent_id)
-        agent_topic_id = agent_row_for_topic[1] if agent_row_for_topic else None
         if group_chat_id:
             try:
-                await _post_to_group_from_db(context, sorov, GROUP_CHAT_ID, agent_topic_id)
+                await _post_to_group_from_db(context, sorov, GROUP_CHAT_ID, None)
                 await _safe_edit(
                     query,
                     f"✅ So'rov #{sorov_id} tasdiqlandi.\n"
@@ -1774,9 +1845,7 @@ async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as _e:
         logger.warning(f"Audit log yozishda xato (limit): {_e}")
 
-    user_row_lim = await db.get_xodim(uid)
-    lim_topic_id = user_row_lim[1] if user_row_lim else None
-    thread_l = {"message_thread_id": lim_topic_id} if lim_topic_id else {}
+    thread_l = {}
     card = _card_limit(ism, dokon, limit_str, sorov_id)
 
     async def _send_limit(thread: dict):
@@ -1798,21 +1867,12 @@ async def limit_summa_olish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await _send_limit(thread_l)
     except Exception as e:
-        err_str = str(e).lower()
-        if lim_topic_id and ("thread" in err_str or "topic" in err_str or "message_thread" in err_str):
-            logger.warning(f"Limit: Topic {lim_topic_id} yopiq/yo'q, umumiy topicga qayta yubormoqda: {e}")
-            await _send_limit({})
-            try:
-                await db.clear_topic_id(uid)
-            except Exception:
-                pass
-        else:
-            logger.warning(f"Limit guruhga yuborishda xato: {e}")
-            await update.message.reply_text(
-                f"⚠️ Guruhga yuborishda xato: {e}", reply_markup=filial_rahbari_kb(),
-            )
-            context.user_data.pop("limit_data", None)
-            return ConversationHandler.END
+        logger.warning(f"Limit guruhga yuborishda xato: {e}")
+        await update.message.reply_text(
+            f"⚠️ Guruhga yuborishda xato: {e}", reply_markup=filial_rahbari_kb(),
+        )
+        context.user_data.pop("limit_data", None)
+        return ConversationHandler.END
 
     await update.message.reply_text(
         f"✅ Limit so'rovi yuborildi!\n🏪 Dokon: {dokon}\n💰 Limitlar:\n"

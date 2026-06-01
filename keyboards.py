@@ -77,14 +77,14 @@ def klientlar_stats_kb() -> InlineKeyboardMarkup:
 
 def agent_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["❓ So'rov"]],
+        [["❓ So'rov"], ["📋 FAQ"]],
         resize_keyboard=True,
     )
 
 
 def supervisor_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["🏪 Yangi Klient", "📝 Muammo yozish"]],
+        [["🏪 Yangi Klient", "📝 Muammo yozish"], ["📋 FAQ"]],
         resize_keyboard=True,
     )
 
@@ -94,6 +94,7 @@ def filial_rahbari_kb() -> ReplyKeyboardMarkup:
         [
             ["🏪 Dokon qo'shish"],
             ["💰 Limit qo'shish", "📝 Muammo yozish"],
+            ["📋 FAQ"],
         ],
         resize_keyboard=True,
     )
@@ -101,14 +102,14 @@ def filial_rahbari_kb() -> ReplyKeyboardMarkup:
 
 def operator_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["🏪 Yangi Klient", "📝 Muammo yozish"]],
+        [["🏪 Yangi Klient", "📝 Muammo yozish"], ["📋 FAQ"]],
         resize_keyboard=True,
     )
 
 
 def distribyutor_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["📝 Muammo yozish"]],
+        [["📝 Muammo yozish"], ["📋 FAQ"]],
         resize_keyboard=True,
     )
 

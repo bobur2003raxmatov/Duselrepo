@@ -162,7 +162,7 @@ class Klient(models.Model):
     agent_kod = models.TextField()
     vizit_kun = models.TextField()
     chastota = models.TextField()
-    limit_summa = models.FloatField()
+    limit_summa = models.TextField()
     brendlar = models.TextField(null=True, blank=True)
     status = models.TextField(default="pending")
     reject_reason = models.TextField(null=True, blank=True)
@@ -260,8 +260,8 @@ class AuditLog(models.Model):
     class Meta:
         db_table = "audit_log"
         ordering = ["-id"]
-        verbose_name = "Audit log"
-        verbose_name_plural = "Audit loglar"
+        verbose_name = "Harakat"
+        verbose_name_plural = "Harakatlar"
 
     def __str__(self):
         return f"{self.action_type} by {self.user_id} at {self.created_at}"
@@ -281,3 +281,83 @@ class Instruksiya(models.Model):
 
     def __str__(self):
         return self.lavozim
+
+
+class BotMenuRol(models.Model):
+    """Har bir lavozim uchun menyu konfiguratsiyasi."""
+    lavozim = models.CharField(max_length=50, unique=True)
+    faol    = models.BooleanField(default=True)
+    izoh    = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table         = "bot_menu_rol"
+        verbose_name     = "Rol menyu"
+        verbose_name_plural = "Rol menyular"
+        ordering         = ["lavozim"]
+
+    def __str__(self):
+        return self.lavozim
+
+
+class BotTugma(models.Model):
+    """Menyudagi bitta tugma."""
+    BUYRUQ_CHOICES = [
+        ("sorov",              "❓ So'rov / Muammo yozish"),
+        ("yangi_klient",       "🏪 Yangi Klient"),
+        ("dokon_qoshish",      "🏪 Do'kon qo'shish"),
+        ("limit",              "💰 Limit qo'shish"),
+        ("faq",                "📋 FAQ"),
+        ("mening_klientlarim", "📋 Mening Klientlarim"),
+        ("matn_javob",         "💬 Matn javobi (extra maydonga yozing)"),
+    ]
+
+    rol    = models.ForeignKey(BotMenuRol, on_delete=models.CASCADE, related_name="tugmalar")
+    matn   = models.CharField(max_length=100, help_text="Tugma ustidagi yozuv")
+    buyruq = models.CharField(max_length=50, choices=BUYRUQ_CHOICES, help_text="Tugma bosilganda ishga tushiriladigan buyruq")
+    qator  = models.PositiveSmallIntegerField(default=1, help_text="Nechunchi qatorda (1 dan boshlab)")
+    ustun  = models.PositiveSmallIntegerField(default=1, help_text="Qatordagi o'rni (1 dan boshlab)")
+    faol   = models.BooleanField(default=True)
+    extra  = models.TextField(null=True, blank=True, help_text="matn_javob uchun: yuborish kerak bo'lgan matn")
+
+    class Meta:
+        db_table         = "bot_tugma"
+        ordering         = ["qator", "ustun"]
+        verbose_name     = "Tugma"
+        verbose_name_plural = "Tugmalar"
+
+    def __str__(self):
+        return f"[{self.rol.lavozim}] {self.matn} → {self.buyruq}"
+
+
+class BotSlashBuyruq(models.Model):
+    """Telegram /buyruq lari — admin paneldan boshqariladi."""
+    LAVOZIM_CHOICES = [
+        ("",               "Barcha foydalanuvchilar"),
+        ("Agent",          "Agent"),
+        ("Supervisor",     "Supervisor"),
+        ("Filial Rahbari", "Filial Rahbari"),
+        ("Operator",       "Operator"),
+        ("Distribyutor",   "Distribyutor"),
+        ("admin",          "Faqat Admin"),
+    ]
+
+    buyruq  = models.CharField(max_length=32, unique=True,
+                               help_text="Masalan: faq (/ belgisisiz, kichik harf)")
+    tavsif  = models.CharField(max_length=256,
+                               help_text="Telegram da ko'rinadigan tavsif")
+    lavozim = models.CharField(max_length=50, blank=True, default="",
+                               choices=LAVOZIM_CHOICES,
+                               help_text="Bo'sh = barcha; yoki aniq lavozim")
+    faol    = models.BooleanField(default=True)
+    tartib  = models.PositiveSmallIntegerField(default=0,
+                                               help_text="Ro'yxatdagi tartib (kichikroq = yuqorida)")
+
+    class Meta:
+        db_table         = "bot_slash_buyruq"
+        ordering         = ["tartib", "buyruq"]
+        verbose_name     = "Slash buyruq"
+        verbose_name_plural = "Slash buyruqlar"
+
+    def __str__(self):
+        scope = f" [{self.lavozim}]" if self.lavozim else ""
+        return f"/{self.buyruq}{scope} — {self.tavsif}"

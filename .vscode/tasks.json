@@ -1,0 +1,107 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+
+    // ── Django amaliyotlar ───────────────────────────────────────────────────
+
+    {
+      "label": "🌐 Django: runserver",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py runserver 8000",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "panel": "dedicated", "reveal": "always", "group": "django" },
+      "problemMatcher": []
+    },
+    {
+      "label": "🤖 Bot: ishga tushir",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py runbot",
+      "group": "build",
+      "presentation": { "panel": "dedicated", "reveal": "always", "group": "bot" },
+      "problemMatcher": []
+    },
+    {
+      "label": "📦 Django: migrate",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py migrate",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": []
+    },
+    {
+      "label": "✏️  Django: makemigrations",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py makemigrations",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": []
+    },
+    {
+      "label": "👤 Django: createsuperuser",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py createsuperuser",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": []
+    },
+    {
+      "label": "🐚 Django: shell",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py shell",
+      "group": "build",
+      "presentation": { "panel": "dedicated", "reveal": "always" },
+      "problemMatcher": []
+    },
+    {
+      "label": "📋 Django: showmigrations",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py showmigrations",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": []
+    },
+    {
+      "label": "🗃️  Bot: DB dump (JSON)",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py dumpdata bot_app --indent 2 > backup_$(date +%Y%m%d).json",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": []
+    },
+    {
+      "label": "♻️  Bot: DB ni tiklash (JSON)",
+      "type": "shell",
+      "command": "source .env && venv/bin/python manage.py loaddata ${input:backupFile}",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": [],
+      "inputs": [
+        { "id": "backupFile", "type": "promptString", "description": "JSON fayl nomi" }
+      ]
+    },
+    {
+      "label": "📊 Log: botni kuzatish (tail)",
+      "type": "shell",
+      "command": "tail -f bot_run.log",
+      "group": "build",
+      "presentation": { "panel": "dedicated", "reveal": "always", "group": "log" },
+      "problemMatcher": []
+    },
+    {
+      "label": "🔴 Bot: to'xtatish",
+      "type": "shell",
+      "command": "pkill -f 'manage.py runbot' && echo 'Bot to\\'xtatildi'",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": []
+    },
+    {
+      "label": "🔁 Bot: qayta ishga tushirish",
+      "type": "shell",
+      "command": "pkill -f 'manage.py runbot'; sleep 1; source .env && nohup venv/bin/python manage.py runbot >> bot_run.log 2>&1 &",
+      "group": "build",
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "problemMatcher": []
+    }
+  ]
+}
