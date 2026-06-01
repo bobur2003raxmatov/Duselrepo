@@ -972,7 +972,7 @@ async def insert_audit_log(user_id: int, user_role: str, action_type: str,
 async def get_audit_logs(
     filter_type: str = "all",
     date_filter: str = "all",
-    limit: int = 15,
+    limit: int = 5,
     offset: int = 0,
 ) -> list:
     from datetime import datetime as _dt, timedelta as _td

@@ -422,7 +422,7 @@ _DATE_LABEL = {
 }
 
 
-PAGE_SIZE = 15
+PAGE_SIZE = 5
 
 
 async def _send_tarix(send_fn, logs: list, filter_type: str = "all",
