@@ -30,7 +30,6 @@ import fcntl
 print("stdlib imported OK", flush=True)
 
 from telegram import BotCommand, ChatPermissions, Update
-from telegram.ext import PicklePersistence
 from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=PTBUserWarning)
 from telegram.ext import (
@@ -137,8 +136,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_application(webhook_mode: bool = False, post_init_cb=None) -> Application:
-    persistence = PicklePersistence(filepath="bot_persistence.pkl")
-    builder = Application.builder().token(TOKEN).persistence(persistence)
+    builder = Application.builder().token(TOKEN)
     if webhook_mode:
         builder = builder.updater(None)
     if post_init_cb is not None:
