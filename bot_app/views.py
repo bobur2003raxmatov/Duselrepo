@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 
 from django.http import HttpResponse, HttpResponseForbidden
 from django.views import View
@@ -35,6 +36,7 @@ def _ensure_bot_started():
 class WebhookView(View):
 
     def post(self, request, token):
+        t0 = time.monotonic()
         from config import TOKEN as _TOKEN
         if token != _TOKEN:
             return HttpResponseForbidden("Invalid token")
@@ -43,26 +45,29 @@ class WebhookView(View):
         app  = get_bot_app()
         loop = get_bot_loop()
 
+        logger.info(f"WH: app={app is not None} loop={loop is not None} t={time.monotonic()-t0:.3f}s")
+
         if app is None or loop is None:
             _ensure_bot_started()
-            logger.error("Bot application tayyor emas")
+            logger.warning(f"WH: 503 t={time.monotonic()-t0:.3f}s")
             return HttpResponse(status=503)
 
         try:
             from telegram import Update
             data   = json.loads(request.body)
             update = Update.de_json(data, app.bot)
-            # Bot ning o'z event loop ida processing — bloklanmasin
-            asyncio.run_coroutine_threadsafe(app.process_update(update), loop)
+            logger.info(f"WH: update parsed t={time.monotonic()-t0:.3f}s")
+            loop.call_soon_threadsafe(app.update_queue.put_nowait, update)
+            logger.info(f"WH: update queued t={time.monotonic()-t0:.3f}s")
         except Exception as e:
             logger.exception(f"Webhook xatosi: {e}")
 
+        logger.info(f"WH: returning 200 t={time.monotonic()-t0:.3f}s")
         return HttpResponse(status=200)
 
     def get(self, request, token):
         from config import TOKEN as _TOKEN
         if token != _TOKEN:
             return HttpResponseForbidden()
-        app = get_bot_app() if False else _bot_app
-        status = "✅ Bot ishlayapti" if app else "⚠️ Bot tayyor emas"
+        status = "✅ Bot ishlayapti" if _bot_app else "⚠️ Bot tayyor emas"
         return HttpResponse(status)
