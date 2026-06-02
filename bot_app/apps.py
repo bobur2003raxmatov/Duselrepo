@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import logging
 import os
 import sys
@@ -68,12 +67,9 @@ async def _init_bot_async():
     await app.initialize()   # post_init ni chaqiradi (menu cache, slash cmds, jobs)
     await app.start()        # job queue ishga tushadi
 
-    # Webhook o'rnatish — TOKEN dagi ':' belgisi nginx da muammo qiladi,
-    # shuning uchun URL-safe hash ishlatamiz
     from config import TOKEN, WEBHOOK_URL
     if WEBHOOK_URL:
-        wh_secret = hashlib.sha256(TOKEN.encode()).hexdigest()
-        wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{wh_secret}/"
+        wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
         await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
         logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
     else:

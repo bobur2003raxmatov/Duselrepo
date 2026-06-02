@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import logging
 
@@ -23,8 +22,7 @@ class WebhookView(View):
 
     def post(self, request, token):
         from config import TOKEN as _TOKEN
-        wh_secret = hashlib.sha256(_TOKEN.encode()).hexdigest()
-        if token != wh_secret:
+        if token != _TOKEN:
             return HttpResponseForbidden("Invalid token")
 
         from bot_app.apps import get_bot_app, get_bot_loop
