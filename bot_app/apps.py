@@ -76,8 +76,11 @@ async def _init_bot_async():
 
         if WEBHOOK_URL:
             wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
-            await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
-            logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
+            try:
+                await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
+                logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
+            except Exception as e:
+                logger.warning(f"⚠️  set_webhook xatosi (webhook allaqachon o'rnatilgan bo'lishi mumkin): {e}")
         else:
             logger.warning("⚠️  WEBHOOK_URL yo'q — lokal testda ngrok ishlatilsin.")
 
