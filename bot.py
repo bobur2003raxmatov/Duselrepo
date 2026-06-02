@@ -1,33 +1,32 @@
 import os
 import sys
 
-# ── Django setup (modellar import bo'lishidan oldin) ──────────────
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "dusel.settings")
-import django
-django.setup()
-# ──────────────────────────────────────────────────────────────────
+# Django setup — faqat to'g'ridan-to'g'ri ishlatilganda (python bot.py)
+# Django muhitida (apps.py orqali) bu blok o'tkazib yuboriladi
+if __name__ == "__main__" or not os.environ.get("DJANGO_SETTINGS_MODULE"):
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "dusel.settings")
+    import django
+    django.setup()
 
 # ── Startup diagnostics (runs before any import that can fail) ─────
-print("=== BOT STARTUP ===", flush=True)
-print(f"TOKEN      : {'SET' if os.environ.get('TOKEN') else '*** NOT SET ***'}", flush=True)
-print(f"WEBHOOK_URL: {os.environ.get('WEBHOOK_URL') or '*** NOT SET ***'}", flush=True)
-print(f"PORT       : {os.environ.get('PORT', '8443')}", flush=True)
-print(f"ADMIN_ID   : {os.environ.get('ADMIN_ID', 'NOT SET')}", flush=True)
-print("===================", flush=True)
+if __name__ == "__main__":
+    print("=== BOT STARTUP ===", flush=True)
+    print(f"TOKEN      : {'SET' if os.environ.get('TOKEN') else '*** NOT SET ***'}", flush=True)
+    print(f"WEBHOOK_URL: {os.environ.get('WEBHOOK_URL') or '*** NOT SET ***'}", flush=True)
+    print(f"PORT       : {os.environ.get('PORT', '8443')}", flush=True)
+    print(f"ADMIN_ID   : {os.environ.get('ADMIN_ID', 'NOT SET')}", flush=True)
+    print("===================", flush=True)
 
-if not os.environ.get("TOKEN"):
-    print("FATAL: TOKEN environment variable is not set. Exiting.", flush=True)
-    sys.exit(1)
+    if not os.environ.get("TOKEN"):
+        print("FATAL: TOKEN environment variable is not set. Exiting.", flush=True)
+        sys.exit(1)
 # ───────────────────────────────────────────────────────────────────
-
-print("=== STARTING IMPORTS ===", flush=True)
 
 import traceback
 import logging
 import datetime
 import warnings
 import fcntl
-print("stdlib imported OK", flush=True)
 
 from telegram import BotCommand, ChatPermissions, Update
 from telegram.warnings import PTBUserWarning
@@ -41,7 +40,6 @@ from telegram.ext import (
     MessageReactionHandler,
     filters,
 )
-print("telegram imported OK", flush=True)
 
 from config import (
     TOKEN, GROUP_CHAT_ID, WEBHOOK_URL, PORT,
@@ -60,13 +58,10 @@ from config import (
     LIMIT_DOKON, LIMIT_SUMMA,
     INSTR_MATN, ADD_ADMIN_ID,
 )
-print("config imported OK", flush=True)
 
 from database import init_db
-print("database imported OK", flush=True)
 
 from utils import daily_report_job, weekly_report_job, agent_reminder_job, pending_sorovlar_alert_job
-print("utils imported OK", flush=True)
 
 from handlers import (
     reaction_handler,
@@ -109,7 +104,6 @@ from handlers import (
     matn_javob_handler,
 )
 from handlers.menu_dispatch import BuyruqFilter
-print("handlers imported OK", flush=True)
 
 from sorov_handlers import (
     sorov_start, sorov_tur_olish,
@@ -119,8 +113,6 @@ from sorov_handlers import (
     sorov_sup_callback,
     limit_start, limit_dokon_olish, limit_summa_olish,
 )
-print("sorov_handlers imported OK", flush=True)
-print("=== ALL IMPORTS DONE ===", flush=True)
 
 # ── Logging: console + file ───────────────────────────────────────
 from logging.handlers import RotatingFileHandler
