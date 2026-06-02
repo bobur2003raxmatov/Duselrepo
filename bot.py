@@ -136,11 +136,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def build_application(webhook_mode: bool = False) -> Application:
+def build_application(webhook_mode: bool = False, post_init_cb=None) -> Application:
     persistence = PicklePersistence(filepath="bot_persistence.pkl")
     builder = Application.builder().token(TOKEN).persistence(persistence)
     if webhook_mode:
-        builder = builder.updater(None)  # polling yo'q
+        builder = builder.updater(None)
+    if post_init_cb is not None:
+        builder = builder.post_init(post_init_cb)
     app = builder.build()
 
     start_cmd = CommandHandler("start", start)

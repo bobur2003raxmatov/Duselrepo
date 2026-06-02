@@ -32,7 +32,6 @@ class BotAppConfig(AppConfig):
             return
         if not os.environ.get("TOKEN"):
             return
-        # migrate, collectstatic, shell kabi commandlarda ishlamasin
         argv = " ".join(sys.argv)
         skip_cmds = ("migrate", "collectstatic", "makemigrations",
                      "shell", "createsuperuser", "runbot", "bot.py")
@@ -54,27 +53,31 @@ def _start_bot_thread():
 async def _init_bot_async():
     global _bot_app
 
-    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if project_dir not in sys.path:
-        sys.path.insert(0, project_dir)
+    try:
+        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if project_dir not in sys.path:
+            sys.path.insert(0, project_dir)
 
-    from bot import build_application, post_init, error_handler
+        from bot import build_application, post_init, error_handler
 
-    app = build_application(webhook_mode=True)
-    app.post_init = post_init
-    app.add_error_handler(error_handler)
+        app = build_application(webhook_mode=True, post_init_cb=post_init)
+        app.add_error_handler(error_handler)
 
-    await app.initialize()   # post_init ni chaqiradi (menu cache, slash cmds, jobs)
-    await app.start()        # job queue ishga tushadi
+        await app.initialize()
+        await app.start()
 
-    from config import TOKEN, WEBHOOK_URL
-    if WEBHOOK_URL:
-        wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
-        await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
-        logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
-    else:
-        logger.warning("WEBHOOK_URL o'rnatilmagan — webhook ishlamaydi.")
+        from config import TOKEN, WEBHOOK_URL
+        if WEBHOOK_URL:
+            wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
+            await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
+            logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
+        else:
+            logger.warning("WEBHOOK_URL o'rnatilmagan — webhook ishlamaydi.")
 
-    _bot_app = app
-    from bot_app.views import set_bot_app
-    set_bot_app(app)
+        _bot_app = app
+        from bot_app.views import set_bot_app
+        set_bot_app(app)
+        logger.info("✅ Bot tayyor, so'rovlarni qabul qiladi.")
+
+    except Exception:
+        logger.exception("❌ Bot ishga tushirishda xato!")
