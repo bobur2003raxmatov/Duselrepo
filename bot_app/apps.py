@@ -10,14 +10,21 @@ logger = logging.getLogger(__name__)
 
 _bot_app  = None
 _bot_loop = None
+_bot_pid  = None   # qaysi process ishga tushirganini saqlaymiz
 _ready    = False
 
 
 def get_bot_app():
+    """Faqat shu process ishga tushirgan bot'ni qaytaradi."""
+    if _bot_pid != os.getpid():
+        return None
     return _bot_app
 
 
 def get_bot_loop():
+    """Faqat shu process ishga tushirgan loop'ni qaytaradi."""
+    if _bot_pid != os.getpid():
+        return None
     return _bot_loop
 
 
@@ -47,11 +54,11 @@ def _start_bot_thread():
     t = threading.Thread(target=_bot_loop.run_forever, daemon=True, name="telegram-bot")
     t.start()
     asyncio.run_coroutine_threadsafe(_init_bot_async(), _bot_loop)
-    logger.info("Bot thread ishga tushirildi (background).")
+    logger.info(f"Bot thread ishga tushirildi (pid={os.getpid()}).")
 
 
 async def _init_bot_async():
-    global _bot_app
+    global _bot_app, _bot_pid
 
     try:
         project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -75,9 +82,10 @@ async def _init_bot_async():
             logger.warning("⚠️  WEBHOOK_URL yo'q — lokal testda ngrok ishlatilsin.")
 
         _bot_app = app
+        _bot_pid = os.getpid()   # shu process tayyor
         from bot_app.views import set_bot_app
         set_bot_app(app)
-        logger.info("✅ Bot webhook rejimda tayyor.")
+        logger.info(f"✅ Bot tayyor (pid={_bot_pid}).")
 
     except Exception:
         logger.exception("❌ Bot ishga tushirishda xato!")
