@@ -538,26 +538,23 @@ def main():
         logger.error("Bot allaqachon ishlamoqda! Ikkinchi instance ishga tushmaydi.")
         sys.exit(1)
 
-    logger.info("🚀 Dusel Company boti ishga tushmoqda...")
-    app = build_application(webhook_mode=bool(WEBHOOK_URL), post_init_cb=post_init)
+    if not WEBHOOK_URL:
+        logger.error("WEBHOOK_URL o'rnatilmagan. Bot faqat webhook orqali ishlaydi.")
+        sys.exit(1)
+
+    logger.info("🚀 Dusel Company boti ishga tushmoqda (webhook)...")
+    app = build_application(webhook_mode=True, post_init_cb=post_init)
     app.add_error_handler(error_handler)
 
-    if WEBHOOK_URL:
-        logger.info(f"🌐 Webhook rejimi: {WEBHOOK_URL}  port={PORT}")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=f"webhook/{TOKEN}",
-            webhook_url=f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/",
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES,
-        )
-    else:
-        logger.info("🔄 Polling rejimi (lokalda ishlatish uchun)")
-        app.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES,
-        )
+    logger.info(f"🌐 Webhook: {WEBHOOK_URL}  port={PORT}")
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=f"webhook/{TOKEN}",
+        webhook_url=f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/",
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
