@@ -8,3 +8,5 @@ bot.log
 bot_run.log
 bot.pid
 bot_persistence.pkl
+staticfiles/
+static/
