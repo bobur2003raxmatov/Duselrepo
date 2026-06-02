@@ -47,12 +47,8 @@ def _start_bot_thread():
     _bot_loop = asyncio.new_event_loop()
     t = threading.Thread(target=_bot_loop.run_forever, daemon=True, name="telegram-bot")
     t.start()
-    future = asyncio.run_coroutine_threadsafe(_init_bot_async(), _bot_loop)
-    try:
-        future.result(timeout=40)
-        logger.info("✅ Telegram bot webhook rejimida tayyor.")
-    except Exception as e:
-        logger.error(f"Bot ishga tushirishda xato: {e}", exc_info=True)
+    asyncio.run_coroutine_threadsafe(_init_bot_async(), _bot_loop)
+    logger.info("Bot thread ishga tushirildi (background).")
 
 
 async def _init_bot_async():
