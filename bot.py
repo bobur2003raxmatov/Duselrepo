@@ -547,8 +547,7 @@ def main():
         sys.exit(1)
 
     logger.info("🚀 Dusel Company boti ishga tushmoqda...")
-    app = build_application()
-    app.post_init = post_init
+    app = build_application(webhook_mode=bool(WEBHOOK_URL), post_init_cb=post_init)
     app.add_error_handler(error_handler)
 
     if WEBHOOK_URL:
@@ -556,8 +555,8 @@ def main():
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
+            url_path=f"webhook/{TOKEN}",
+            webhook_url=f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/",
             drop_pending_updates=True,
             allowed_updates=Update.ALL_TYPES,
         )

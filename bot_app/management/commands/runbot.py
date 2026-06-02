@@ -47,8 +47,7 @@ class Command(BaseCommand):
         # Async init (db cache yuklash) yangi loop da
         asyncio.run(init_db())
 
-        app = build_application()
-        app.post_init = post_init
+        app = build_application(webhook_mode=bool(WEBHOOK_URL), post_init_cb=post_init)
         app.add_error_handler(error_handler)
 
         if WEBHOOK_URL:
