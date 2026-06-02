@@ -61,8 +61,7 @@ async def _init_bot_async():
         from bot import build_application, post_init, error_handler
         from config import TOKEN, WEBHOOK_URL
 
-        webhook_mode = bool(WEBHOOK_URL)
-        app = build_application(webhook_mode=webhook_mode, post_init_cb=post_init)
+        app = build_application(webhook_mode=True, post_init_cb=post_init)
         app.add_error_handler(error_handler)
 
         await app.initialize()
@@ -72,22 +71,13 @@ async def _init_bot_async():
             wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
             await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
             logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
-            _bot_app = app
-            from bot_app.views import set_bot_app
-            set_bot_app(app)
-            logger.info("✅ Bot webhook rejimda tayyor.")
         else:
-            # Lokal: polling rejimi
-            logger.info("🔄 Polling rejimi ishga tushmoqda (lokal)...")
-            _bot_app = app
-            from bot_app.views import set_bot_app
-            set_bot_app(app)
-            await app.updater.start_polling(
-                drop_pending_updates=True,
-                allowed_updates=["message", "callback_query",
-                                 "message_reaction", "chat_member", "my_chat_member"],
-            )
-            logger.info("✅ Bot polling rejimda tayyor.")
+            logger.warning("⚠️  WEBHOOK_URL yo'q — lokal testda ngrok ishlatilsin.")
+
+        _bot_app = app
+        from bot_app.views import set_bot_app
+        set_bot_app(app)
+        logger.info("✅ Bot webhook rejimda tayyor.")
 
     except Exception:
         logger.exception("❌ Bot ishga tushirishda xato!")
