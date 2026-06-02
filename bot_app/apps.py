@@ -10,20 +10,26 @@ logger = logging.getLogger(__name__)
 
 _bot_app  = None
 _bot_loop = None
-_bot_pid  = None   # qaysi process ishga tushirganini saqlaymiz
 _ready    = False
 
 
+def _bot_thread_alive() -> bool:
+    """Shu processda bot thread ishlayotganini tekshiradi.
+    Fork'dan keyin worker processda thread yo'qoladi — bu to'g'ri aniqlaydi."""
+    return any(
+        t.name == "telegram-bot" and t.is_alive()
+        for t in threading.enumerate()
+    )
+
+
 def get_bot_app():
-    """Faqat shu process ishga tushirgan bot'ni qaytaradi."""
-    if _bot_pid != os.getpid():
+    if not _bot_thread_alive():
         return None
     return _bot_app
 
 
 def get_bot_loop():
-    """Faqat shu process ishga tushirgan loop'ni qaytaradi."""
-    if _bot_pid != os.getpid():
+    if not _bot_thread_alive():
         return None
     return _bot_loop
 
@@ -58,7 +64,7 @@ def _start_bot_thread():
 
 
 async def _init_bot_async():
-    global _bot_app, _bot_pid
+    global _bot_app
 
     try:
         project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -80,15 +86,14 @@ async def _init_bot_async():
                 await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
                 logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
             except Exception as e:
-                logger.warning(f"⚠️  set_webhook xatosi (webhook allaqachon o'rnatilgan bo'lishi mumkin): {e}")
+                logger.warning(f"⚠️  set_webhook: {e}")
         else:
-            logger.warning("⚠️  WEBHOOK_URL yo'q — lokal testda ngrok ishlatilsin.")
+            logger.warning("⚠️  WEBHOOK_URL yo'q.")
 
         _bot_app = app
-        _bot_pid = os.getpid()   # shu process tayyor
         from bot_app.views import set_bot_app
         set_bot_app(app)
-        logger.info(f"✅ Bot tayyor (pid={_bot_pid}).")
+        logger.info(f"✅ Bot tayyor (pid={os.getpid()}).")
 
     except Exception:
         logger.exception("❌ Bot ishga tushirishda xato!")
