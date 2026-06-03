@@ -361,3 +361,20 @@ class BotSlashBuyruq(models.Model):
     def __str__(self):
         scope = f" [{self.lavozim}]" if self.lavozim else ""
         return f"/{self.buyruq}{scope} — {self.tavsif}"
+
+
+class BotConversationState(models.Model):
+    """ConversationHandler holatlarini saqlaydi (worker restart da yo'qolmasin)."""
+    handler_name = models.CharField(max_length=100)
+    conv_key     = models.CharField(max_length=100)   # JSON: [chat_id, user_id]
+    state        = models.IntegerField(null=True, blank=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table         = "bot_conversation_state"
+        unique_together  = ("handler_name", "conv_key")
+        verbose_name     = "Suhbat holati"
+        verbose_name_plural = "Suhbat holatlari"
+
+    def __str__(self):
+        return f"{self.handler_name}:{self.conv_key}={self.state}"

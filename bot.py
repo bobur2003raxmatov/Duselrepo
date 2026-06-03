@@ -128,7 +128,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_application(webhook_mode: bool = False, post_init_cb=None) -> Application:
-    builder = Application.builder().token(TOKEN)
+    from bot_app.persistence import DjangoPersistence
+    builder = Application.builder().token(TOKEN).persistence(DjangoPersistence())
     if webhook_mode:
         builder = builder.updater(None)
     if post_init_cb is not None:
