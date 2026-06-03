@@ -61,8 +61,10 @@ async def set_db_version(version: int) -> None:
 async def init_db():
     """
     Jadvallar manage.py migrate orqali yaratiladi.
-    Bu funksiya faqat xotira keshini to'ldiradi.
+    Bu funksiya faqat xotira keshini to'ldiradi va asosiy adminni qo'shadi.
     """
+    (_, _, _, _, _, _, _, _, _, _, _, _, AdminUser, _, _) = _models()
+    await AdminUser.objects.aget_or_create(user_id=ADMIN_ID)
     await _reload_admin_cache()
 
 
@@ -75,6 +77,7 @@ async def _reload_admin_cache() -> None:
     ids = [r async for r in AdminUser.objects.values_list("user_id", flat=True)]
     _admin_cache.clear()
     _admin_cache.update(ids)
+    _admin_cache.add(ADMIN_ID)
 
 
 async def get_admins() -> list[int]:
@@ -84,6 +87,8 @@ async def get_admins() -> list[int]:
 
 
 async def is_admin(user_id: int) -> bool:
+    if user_id == ADMIN_ID:
+        return True
     if not _admin_cache:
         await _reload_admin_cache()
     return user_id in _admin_cache

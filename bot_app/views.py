@@ -35,13 +35,6 @@ def _ensure_bot_started():
 class WebhookView(View):
 
     def post(self, request, token):
-        import sys, time
-        t0 = time.monotonic()
-        def log(msg):
-            sys.stderr.write(f"[WH {time.monotonic()-t0:.3f}s] {msg}\n")
-            sys.stderr.flush()
-
-        log("START")
         from config import TOKEN as _TOKEN
         if token != _TOKEN:
             return HttpResponseForbidden("Invalid token")
@@ -49,27 +42,20 @@ class WebhookView(View):
         from bot_app.apps import get_bot_app, get_bot_loop, _bot_thread_alive
         app  = get_bot_app()
         loop = get_bot_loop()
-        log(f"app={app is not None} loop={loop is not None} thread={_bot_thread_alive()}")
 
         if app is None or loop is None:
             if not _bot_thread_alive():
                 _ensure_bot_started()
-            log("503")
             return HttpResponse(status=503)
 
         try:
             from telegram import Update
             data   = json.loads(request.body)
-            log("de_json start")
             update = Update.de_json(data, app.bot)
-            log("put_nowait start")
             loop.call_soon_threadsafe(app.update_queue.put_nowait, update)
-            log("put_nowait done")
         except Exception as e:
-            log(f"ERR {e}")
             logger.exception(f"Webhook xatosi: {e}")
 
-        log("200")
         return HttpResponse(status=200)
 
     def get(self, request, token):
