@@ -50,7 +50,15 @@ class WebhookView(View):
 
         try:
             from telegram import Update
-            data   = json.loads(request.body)
+            data = json.loads(request.body)
+            # PTB 22.x: ba'zi xabarlarda 'date' maydoni yo'q bo'ladi
+            for key in ("message", "edited_message", "channel_post", "edited_channel_post"):
+                if isinstance(data.get(key), dict) and "date" not in data[key]:
+                    data[key]["date"] = 0
+            cq = data.get("callback_query")
+            if isinstance(cq, dict) and isinstance(cq.get("message"), dict):
+                if "date" not in cq["message"]:
+                    cq["message"]["date"] = 0
             update = Update.de_json(data, app.bot)
             loop.call_soon_threadsafe(app.update_queue.put_nowait, update)
         except Exception as e:
