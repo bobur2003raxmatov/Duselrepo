@@ -40,12 +40,21 @@ class WebhookView(View):
             return HttpResponseForbidden("Invalid token")
 
         from bot_app.apps import get_bot_app, get_bot_loop, _bot_thread_alive
-        app  = get_bot_app()
-        loop = get_bot_loop()
+        import time
+
+        if not _bot_thread_alive():
+            _ensure_bot_started()
+
+        # Bot thread init bo'layotgan bo'lsa, 3 soniya kutamiz
+        app = loop = None
+        for _ in range(30):
+            app  = get_bot_app()
+            loop = get_bot_loop()
+            if app is not None and loop is not None:
+                break
+            time.sleep(0.1)
 
         if app is None or loop is None:
-            if not _bot_thread_alive():
-                _ensure_bot_started()
             return HttpResponse(status=503)
 
         try:
