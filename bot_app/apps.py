@@ -66,38 +66,47 @@ def _start_bot_thread():
 async def _init_bot_async():
     global _bot_app
 
-    try:
-        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if project_dir not in sys.path:
-            sys.path.insert(0, project_dir)
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_dir not in sys.path:
+        sys.path.insert(0, project_dir)
 
-        from bot import build_application, post_init_webhook, error_handler
-        from config import TOKEN, WEBHOOK_URL
+    from bot import build_application, post_init_webhook, error_handler
+    from config import TOKEN, WEBHOOK_URL
 
-        app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
-        app.add_error_handler(error_handler)
+    # Proxy 503 yoki tarmoq xatosi bo'lsa qayta urinish (exponential backoff)
+    for attempt in range(6):
+        try:
+            app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
+            app.add_error_handler(error_handler)
 
-        await app.initialize()
-        await app.start()
+            await app.initialize()
+            await app.start()
 
-        if WEBHOOK_URL:
-            wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
-            try:
-                info = await app.bot.get_webhook_info()
-                if info.url != wh_url:
-                    await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
-                    logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
-                else:
-                    logger.info(f"✅ Webhook allaqachon to'g'ri: {wh_url}")
-            except Exception as e:
-                logger.warning(f"⚠️  set_webhook: {e}")
-        else:
-            logger.warning("⚠️  WEBHOOK_URL yo'q.")
+            if WEBHOOK_URL:
+                wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
+                try:
+                    info = await app.bot.get_webhook_info()
+                    if info.url != wh_url:
+                        await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
+                        logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
+                    else:
+                        logger.info(f"✅ Webhook allaqachon to'g'ri: {wh_url}")
+                except Exception as e:
+                    logger.warning(f"⚠️  set_webhook: {e}")
+            else:
+                logger.warning("⚠️  WEBHOOK_URL yo'q.")
 
-        _bot_app = app
-        from bot_app.views import set_bot_app
-        set_bot_app(app)
-        logger.info(f"✅ Bot tayyor (pid={os.getpid()}).")
+            _bot_app = app
+            from bot_app.views import set_bot_app
+            set_bot_app(app)
+            logger.info(f"✅ Bot tayyor (pid={os.getpid()}).")
+            return
 
-    except Exception:
-        logger.exception("❌ Bot ishga tushirishda xato!")
+        except Exception as e:
+            delay = 2 ** attempt  # 1, 2, 4, 8, 16, 32 soniya
+            logger.warning(
+                f"⚠️  Bot init xatosi (urinish {attempt + 1}/6): {e} — {delay}s kutiladi"
+            )
+            await asyncio.sleep(delay)
+
+    logger.error("❌ Bot 6 urinishdan keyin ham ishga tushmadi!")
