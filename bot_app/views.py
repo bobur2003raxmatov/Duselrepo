@@ -55,9 +55,9 @@ class WebhookView(View):
         if not _bot_thread_alive():
             _ensure_bot_started()
 
-        # Bot tayyor bo'lguncha 8 soniya kutamiz
+        # Bot tayyor bo'lguncha 20 soniya kutamiz (proxy retry 3x = ~9s)
         app = loop = None
-        for _ in range(80):
+        for _ in range(200):
             app  = get_bot_app()
             loop = get_bot_loop()
             if app is not None and loop is not None:
@@ -65,7 +65,7 @@ class WebhookView(View):
             time.sleep(0.1)
 
         if app is None or loop is None:
-            logger.warning("Bot 8s ichida tayyor bo'lmadi — 503")
+            logger.warning("Bot 20s ichida tayyor bo'lmadi — 503")
             return HttpResponse(status=503)
 
         try:
