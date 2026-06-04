@@ -99,16 +99,18 @@ class WebhookView(View):
 
         app  = get_bot_app()
         loop = get_bot_loop()
+        uid  = data.get("update_id", "?")
 
         if app is not None and loop is not None:
             try:
                 from telegram import Update
                 update = Update.de_json(data, app.bot)
                 loop.call_soon_threadsafe(app.update_queue.put_nowait, update)
+                logger.info(f"[webhook] update#{uid} → queue ga yuborildi (pid={__import__('os').getpid()})")
             except Exception as e:
                 logger.exception(f"Update yuborishda xato: {e}")
         else:
-            # Bot hali tayyor emas — navbatga qo'yamiz
+            logger.warning(f"[webhook] update#{uid} → bot tayyor emas, pending ga (pid={__import__('os').getpid()})")
             try:
                 _pending.put_nowait(data)
             except queue.Full:
