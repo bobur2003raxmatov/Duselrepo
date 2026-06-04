@@ -71,10 +71,10 @@ async def _init_bot_async():
         if project_dir not in sys.path:
             sys.path.insert(0, project_dir)
 
-        from bot import build_application, post_init, error_handler
+        from bot import build_application, post_init_webhook, error_handler
         from config import TOKEN, WEBHOOK_URL
 
-        app = build_application(webhook_mode=True, post_init_cb=post_init)
+        app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
         app.add_error_handler(error_handler)
 
         await app.initialize()
@@ -83,8 +83,12 @@ async def _init_bot_async():
         if WEBHOOK_URL:
             wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
             try:
-                await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
-                logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
+                info = await app.bot.get_webhook_info()
+                if info.url != wh_url:
+                    await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
+                    logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
+                else:
+                    logger.info(f"✅ Webhook allaqachon to'g'ri: {wh_url}")
             except Exception as e:
                 logger.warning(f"⚠️  set_webhook: {e}")
         else:

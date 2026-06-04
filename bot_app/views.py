@@ -45,9 +45,9 @@ class WebhookView(View):
         if not _bot_thread_alive():
             _ensure_bot_started()
 
-        # Bot thread init bo'layotgan bo'lsa, 3 soniya kutamiz
+        # Bot thread init bo'layotgan bo'lsa, 8 soniya kutamiz
         app = loop = None
-        for _ in range(30):
+        for _ in range(80):
             app  = get_bot_app()
             loop = get_bot_loop()
             if app is not None and loop is not None:

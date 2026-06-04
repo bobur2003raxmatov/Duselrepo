@@ -498,6 +498,41 @@ async def post_init(app: Application):
     logger.info("✅ Menyu avtomatik yangilanishi rejalashtirildi: har 30 soniya")
 
 
+async def post_init_webhook(app: Application):
+    """uWSGI worker restart uchun tezlashtirilgan init.
+
+    Telegram API chaqiruvlari (set_my_commands, set_chat_permissions, set_webhook)
+    o'tkazib yuboriladi — ular birinchi ishga tushirilganda yoki refresh_menus_job
+    orqali har 30 soniyada bir marta bajariladi. Bu init ~0.3s da tugaydi.
+    """
+    await init_db()
+    try:
+        from database import get_all_active_tugmalar
+        from handlers.menu_dispatch import refresh_menu_cache
+        tugmalar = await get_all_active_tugmalar()
+        refresh_menu_cache(tugmalar)
+    except Exception as e:
+        logger.warning(f"Bot menyu keshini yuklashda xato: {e}")
+
+    tz_uz = datetime.timezone(datetime.timedelta(hours=5))
+    app.job_queue.run_daily(
+        daily_report_job,
+        time=datetime.time(hour=9, minute=0, tzinfo=tz_uz),
+    )
+    app.job_queue.run_daily(
+        weekly_report_job,
+        time=datetime.time(hour=9, minute=0, tzinfo=tz_uz),
+        days=(0,),
+    )
+    app.job_queue.run_daily(
+        agent_reminder_job,
+        time=datetime.time(hour=17, minute=0, tzinfo=tz_uz),
+    )
+    app.job_queue.run_repeating(pending_sorovlar_alert_job, interval=300, first=300)
+    app.job_queue.run_repeating(refresh_menus_job, interval=30, first=10)
+    logger.info("✅ Bot (webhook worker) tayyor — tezlashtirilgan init.")
+
+
 async def error_handler(update: object, context) -> None:
     from telegram.error import NetworkError, TimedOut, Conflict
     from config import ADMIN_ID as _ADMIN
