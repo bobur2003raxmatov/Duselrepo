@@ -10,12 +10,9 @@ logger = logging.getLogger(__name__)
 
 _bot_app  = None
 _bot_loop = None
-_ready    = False
 
 
 def _bot_thread_alive() -> bool:
-    """Shu processda bot thread ishlayotganini tekshiradi.
-    Fork'dan keyin worker processda thread yo'qoladi — bu to'g'ri aniqlaydi."""
     return any(
         t.name == "telegram-bot" and t.is_alive()
         for t in threading.enumerate()
@@ -40,9 +37,6 @@ class BotAppConfig(AppConfig):
     verbose_name = "Dusel Bot"
 
     def ready(self):
-        global _ready
-        if _ready:
-            return
         if not os.environ.get("TOKEN"):
             return
         argv = " ".join(sys.argv)
@@ -50,14 +44,41 @@ class BotAppConfig(AppConfig):
                      "shell", "createsuperuser", "runbot", "bot.py")
         if any(c in argv for c in skip_cmds):
             return
-        _ready = True
+        _register_postfork_or_start()
+
+
+def _register_postfork_or_start():
+    """uWSGI ostida postfork hook ishlatadi; aks holda to'g'ridan-to'g'ri ishga tushiradi.
+
+    uWSGI eager-loading rejimida apps.ready() MASTER processda (pid=1) chaqiriladi.
+    Workerlar fork qilganda thread lar yo'qoladi. postfork hook har bir workerda
+    fork dan KEYIN chaqiriladi — thread har workerda to'g'ri ishga tushadi.
+    """
+    try:
+        import uwsgidecorators
+
+        @uwsgidecorators.postfork
+        def _postfork():
+            if not os.environ.get("TOKEN"):
+                return
+            logger.info(f"[postfork] Worker pid={os.getpid()} — bot thread ishga tushmoqda.")
+            _start_bot_thread()
+
+        logger.info("✅ uWSGI postfork hook ro'yxatdan o'tdi.")
+
+    except ImportError:
+        # uWSGI yo'q (local dev yoki manage.py), to'g'ridan-to'g'ri ishga tushirish
+        logger.info("uWSGI yo'q — bot to'g'ridan-to'g'ri ishga tushirilmoqda.")
         _start_bot_thread()
 
 
 def _start_bot_thread():
-    global _bot_loop
+    global _bot_loop, _bot_app
+    _bot_app = None  # Fork dan keyin eski qiymatni tozalash
     _bot_loop = asyncio.new_event_loop()
-    t = threading.Thread(target=_bot_loop.run_forever, daemon=True, name="telegram-bot")
+    t = threading.Thread(
+        target=_bot_loop.run_forever, daemon=True, name="telegram-bot"
+    )
     t.start()
     asyncio.run_coroutine_threadsafe(_init_bot_async(), _bot_loop)
     logger.info(f"Bot thread ishga tushirildi (pid={os.getpid()}).")
@@ -73,7 +94,7 @@ async def _init_bot_async():
     from bot import build_application, post_init_webhook, error_handler
     from config import TOKEN, WEBHOOK_URL
 
-    # Proxy 503 yoki tarmoq xatosi bo'lsa qayta urinish (exponential backoff)
+    # Proxy 503 yoki tarmoq xatosi uchun exponential backoff bilan qayta urinish
     for attempt in range(6):
         try:
             app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
@@ -109,4 +130,4 @@ async def _init_bot_async():
             )
             await asyncio.sleep(delay)
 
-    logger.error("❌ Bot 6 urinishdan keyin ham ishga tushmadi!")
+    logger.error(f"❌ Bot 6 urinishdan keyin ham ishga tushmadi! (pid={os.getpid()})")

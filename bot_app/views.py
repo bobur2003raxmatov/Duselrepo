@@ -9,9 +9,9 @@ from django.utils.decorators import method_decorator
 
 logger = logging.getLogger(__name__)
 
-_bot_app   = None
+_bot_app    = None
 _start_lock = threading.Lock()
-_started    = False
+_starting   = False   # postfork yoki ensure orqali allaqachon start qilinganmi
 
 
 def set_bot_app(app):
@@ -20,15 +20,24 @@ def set_bot_app(app):
 
 
 def _ensure_bot_started():
-    """Worker processda bot thread yo'q bo'lsa, bir marta ishga tushiradi."""
-    global _started
+    """Bot thread o'lgan bo'lsa qayta ishga tushiradi (postfork fallback)."""
+    global _starting
+    from bot_app.apps import _bot_thread_alive
+    if _bot_thread_alive():
+        return
     with _start_lock:
-        if _started:
+        if _starting:
             return
-        _started = True
-    from bot_app.apps import _start_bot_thread
-    _start_bot_thread()
-    logger.info("Bot worker processda ishga tushirildi.")
+        if _bot_thread_alive():
+            return
+        _starting = True
+    try:
+        from bot_app.apps import _start_bot_thread
+        _start_bot_thread()
+        logger.info("Bot thread _ensure orqali qayta ishga tushirildi.")
+    finally:
+        with _start_lock:
+            _starting = False
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -42,10 +51,11 @@ class WebhookView(View):
         from bot_app.apps import get_bot_app, get_bot_loop, _bot_thread_alive
         import time
 
+        # Bot thread o'lgan bo'lsa qayta ishga tushir
         if not _bot_thread_alive():
             _ensure_bot_started()
 
-        # Bot thread init bo'layotgan bo'lsa, 8 soniya kutamiz
+        # Bot tayyor bo'lguncha 8 soniya kutamiz
         app = loop = None
         for _ in range(80):
             app  = get_bot_app()
@@ -55,6 +65,7 @@ class WebhookView(View):
             time.sleep(0.1)
 
         if app is None or loop is None:
+            logger.warning("Bot 8s ichida tayyor bo'lmadi — 503")
             return HttpResponse(status=503)
 
         try:
