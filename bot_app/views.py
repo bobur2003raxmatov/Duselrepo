@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import queue
@@ -106,8 +107,7 @@ class WebhookView(View):
 
         # ── JSON parse ────────────────────────────────────────────
         try:
-            data = json.loads(request.body)
-            asyncio.run(self._handle(data))
+            data = _patch_date(json.loads(request.body))
         except Exception as e:
             logger.warning(f"[wh] JSON xatosi: {e}")
             return HttpResponse(status=200)
@@ -146,19 +146,6 @@ class WebhookView(View):
         elapsed = time.monotonic() - t0
         logger.info(f"[wh] update#{uid} → 200 ({elapsed*1000:.1f}ms)")
         return HttpResponse(status=200)
-
-    async def _handle(self, data):
-        from config import TOKEN, WEBHOOK_URL
-        from bot import build_application, post_init_webhook, error_handler
-        from telegram import Update
-        app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
-        app.add_error_handler(error_handler)
-        await app.initialize()
-        await app.start()
-        update = Update.de_json(data, app.bot)
-        await app.process_update(update)
-        await app.stop()
-        await app.shutdown()
 
     def get(self, request, token):
         try:
