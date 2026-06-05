@@ -1,9 +1,3 @@
-import asyncio
-import logging
-import os
-import sys
-import threading
-
 from django.apps import AppConfig
 
 logger = logging.getLogger(__name__)
