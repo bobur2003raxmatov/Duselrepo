@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import queue
@@ -10,26 +11,24 @@ from django.utils.decorators import method_decorator
 
 logger = logging.getLogger(__name__)
 
-_bot_app    = None
 _start_lock = threading.Lock()
 _starting   = False
 
-# Bot tayyor bo'lmaguncha kelgan update lar — JSON dict sifatida
-_pending: queue.Queue = queue.Queue(maxsize=200)
+# Bot tayyor bo'lmaguncha kelgan xom JSON update lar
+_pending: queue.Queue = queue.Queue(maxsize=500)
+
+# views.py da ham juftlik saqlaymiz (apps.py dan sinxronlashadi)
+_bot_state: tuple | None = None
 
 
-def set_bot_app(app):
-    global _bot_app
-    _bot_app = app
-    # Bot tayyor bo'lgandan keyin navbatdagi update larni yuborish
-    _flush_pending(app)
+def set_bot_state(app, loop):
+    global _bot_state
+    _bot_state = (app, loop)
+    _flush_pending(app, loop)
+    logger.info(f"✅ set_bot_state: pending={_pending.qsize()} ta update")
 
 
-def _flush_pending(app):
-    from bot_app.apps import get_bot_loop
-    loop = get_bot_loop()
-    if loop is None:
-        return
+def _flush_pending(app, loop):
     count = 0
     while True:
         try:
@@ -39,16 +38,15 @@ def _flush_pending(app):
         try:
             from telegram import Update
             update = Update.de_json(data, app.bot)
-            loop.call_soon_threadsafe(app.update_queue.put_nowait, update)
+            asyncio.run_coroutine_threadsafe(app.process_update(update), loop)
             count += 1
         except Exception as e:
-            logger.warning(f"Pending update xatosi: {e}")
+            logger.warning(f"Pending flush xatosi: {e}")
     if count:
-        logger.info(f"✅ {count} ta kutayotgan update bot ga yuborildi.")
+        logger.info(f"✅ {count} ta kutayotgan update qayta ishlandi.")
 
 
 def _ensure_bot_started():
-    """Bot thread o'lgan bo'lsa qayta ishga tushiradi."""
     global _starting
     from bot_app.apps import _bot_thread_alive
     if _bot_thread_alive():
@@ -66,7 +64,6 @@ def _ensure_bot_started():
 
 
 def _patch_date(data: dict) -> dict:
-    """PTB 22.x: ba'zi xabarlarda 'date' maydoni yo'q."""
     for key in ("message", "edited_message", "channel_post", "edited_channel_post"):
         if isinstance(data.get(key), dict) and "date" not in data[key]:
             data[key]["date"] = 0
@@ -85,32 +82,37 @@ class WebhookView(View):
         if token != _TOKEN:
             return HttpResponseForbidden("Invalid token")
 
-        # Har doim 200 qaytaramiz — Telegram qayta yubormaslik uchun
         try:
             data = _patch_date(json.loads(request.body))
         except Exception as e:
             logger.warning(f"Webhook JSON xatosi: {e}")
             return HttpResponse(status=200)
 
-        from bot_app.apps import get_bot_app, get_bot_loop, _bot_thread_alive
+        from bot_app.apps import _bot_thread_alive
 
         if not _bot_thread_alive():
             _ensure_bot_started()
 
-        app  = get_bot_app()
-        loop = get_bot_loop()
-        uid  = data.get("update_id", "?")
+        # views._bot_state dan olish (apps._bot_state bilan sinxron)
+        state = _bot_state
+        if state is None:
+            # apps.py dan ham tekshirish (birinchi request da race condition bo'lishi mumkin)
+            from bot_app.apps import get_bot_state
+            state = get_bot_state()
 
-        if app is not None and loop is not None:
+        uid = data.get("update_id", "?")
+
+        if state is not None:
+            app, loop = state
             try:
                 from telegram import Update
                 update = Update.de_json(data, app.bot)
-                loop.call_soon_threadsafe(app.update_queue.put_nowait, update)
-                logger.info(f"[webhook] update#{uid} → queue ga yuborildi (pid={__import__('os').getpid()})")
+                asyncio.run_coroutine_threadsafe(app.process_update(update), loop)
+                logger.info(f"[wh] update#{uid} → process_update (pid={__import__('os').getpid()})")
             except Exception as e:
-                logger.exception(f"Update yuborishda xato: {e}")
+                logger.exception(f"process_update xatosi: {e}")
         else:
-            logger.warning(f"[webhook] update#{uid} → bot tayyor emas, pending ga (pid={__import__('os').getpid()})")
+            logger.info(f"[wh] update#{uid} → pending (bot tayyor emas)")
             try:
                 _pending.put_nowait(data)
             except queue.Full:

@@ -8,8 +8,9 @@ from django.apps import AppConfig
 
 logger = logging.getLogger(__name__)
 
-_bot_app  = None
-_bot_loop = None
+# Atomic pair: (Application, running_loop) — har ikkalasi bir xil init dan
+_bot_state: tuple | None = None
+_ready = False
 
 
 def _bot_thread_alive() -> bool:
@@ -19,16 +20,21 @@ def _bot_thread_alive() -> bool:
     )
 
 
-def get_bot_app():
+def get_bot_state() -> tuple | None:
+    """(app, loop) juftligini qaytaradi yoki None."""
     if not _bot_thread_alive():
         return None
-    return _bot_app
+    return _bot_state
+
+
+def get_bot_app():
+    s = get_bot_state()
+    return s[0] if s else None
 
 
 def get_bot_loop():
-    if not _bot_thread_alive():
-        return None
-    return _bot_loop
+    s = get_bot_state()
+    return s[1] if s else None
 
 
 class BotAppConfig(AppConfig):
@@ -37,6 +43,9 @@ class BotAppConfig(AppConfig):
     verbose_name = "Dusel Bot"
 
     def ready(self):
+        global _ready
+        if _ready:
+            return
         if not os.environ.get("TOKEN"):
             return
         argv = " ".join(sys.argv)
@@ -44,16 +53,11 @@ class BotAppConfig(AppConfig):
                      "shell", "createsuperuser", "runbot", "bot.py")
         if any(c in argv for c in skip_cmds):
             return
+        _ready = True
         _register_postfork_or_start()
 
 
 def _register_postfork_or_start():
-    """uWSGI ostida postfork hook ishlatadi; aks holda to'g'ridan-to'g'ri ishga tushiradi.
-
-    uWSGI eager-loading rejimida apps.ready() MASTER processda (pid=1) chaqiriladi.
-    Workerlar fork qilganda thread lar yo'qoladi. postfork hook har bir workerda
-    fork dan KEYIN chaqiriladi — thread har workerda to'g'ri ishga tushadi.
-    """
     try:
         import uwsgidecorators
 
@@ -61,31 +65,26 @@ def _register_postfork_or_start():
         def _postfork():
             if not os.environ.get("TOKEN"):
                 return
-            logger.info(f"[postfork] Worker pid={os.getpid()} — bot thread ishga tushmoqda.")
+            logger.info(f"[postfork] pid={os.getpid()} — bot ishga tushmoqda")
             _start_bot_thread()
 
         logger.info("✅ uWSGI postfork hook ro'yxatdan o'tdi.")
-
     except ImportError:
-        # uWSGI yo'q (local dev yoki manage.py), to'g'ridan-to'g'ri ishga tushirish
-        logger.info("uWSGI yo'q — bot to'g'ridan-to'g'ri ishga tushirilmoqda.")
         _start_bot_thread()
 
 
 def _start_bot_thread():
-    global _bot_loop, _bot_app
-    _bot_app = None  # Fork dan keyin eski qiymatni tozalash
-    _bot_loop = asyncio.new_event_loop()
-    t = threading.Thread(
-        target=_bot_loop.run_forever, daemon=True, name="telegram-bot"
-    )
+    global _bot_state
+    _bot_state = None  # Eski holatni tozalaish
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True, name="telegram-bot")
     t.start()
-    asyncio.run_coroutine_threadsafe(_init_bot_async(), _bot_loop)
+    asyncio.run_coroutine_threadsafe(_init_bot_async(loop), loop)
     logger.info(f"Bot thread ishga tushirildi (pid={os.getpid()}).")
 
 
-async def _init_bot_async():
-    global _bot_app
+async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
+    global _bot_state
 
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if project_dir not in sys.path:
@@ -94,7 +93,6 @@ async def _init_bot_async():
     from bot import build_application, post_init_webhook, error_handler
     from config import TOKEN, WEBHOOK_URL
 
-    # Proxy 503 yoki tarmoq xatosi uchun exponential backoff bilan qayta urinish
     for attempt in range(6):
         try:
             app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
@@ -111,20 +109,21 @@ async def _init_bot_async():
                         await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
                         logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
                     else:
-                        logger.info(f"✅ Webhook allaqachon to'g'ri: {wh_url}")
+                        logger.info(f"✅ Webhook to'g'ri: {wh_url}")
                 except Exception as e:
                     logger.warning(f"⚠️  set_webhook: {e}")
             else:
                 logger.warning("⚠️  WEBHOOK_URL yo'q.")
 
-            _bot_app = app
-            from bot_app.views import set_bot_app
-            set_bot_app(app)
+            # Atomik juftlik — app va uning loopi HAR DOIM mos keladi
+            _bot_state = (app, my_loop)
+            from bot_app.views import set_bot_state
+            set_bot_state(app, my_loop)
             logger.info(f"✅ Bot tayyor (pid={os.getpid()}).")
             return
 
         except Exception as e:
-            delay = 2 ** attempt  # 1, 2, 4, 8, 16, 32 soniya
+            delay = 2 ** attempt
             logger.warning(
                 f"⚠️  Bot init xatosi (urinish {attempt + 1}/6): {e} — {delay}s kutiladi"
             )
