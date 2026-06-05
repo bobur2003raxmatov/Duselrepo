@@ -323,10 +323,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()  # Har qanday davom etayotgan oqimni bekor qiladi
     uid = update.effective_user.id
 
     if await db.is_admin(uid):
+        context.user_data.clear()
         await update.message.reply_text(
             "👑 *Admin boshqaruv paneliga xush kelibsiz!*",
             parse_mode="Markdown",
@@ -336,6 +336,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = await db.get_xodim(uid)
     if user:
+        context.user_data.clear()
         status, topic_id, ism, lavozim, *_ = user
 
         if status == "blocked":
@@ -357,6 +358,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=remove_kb(),
         )
         return ConversationHandler.END
+
+    # Yangi foydalanuvchi — ro'yxatdan o'tish jarayonida qayta /start
+    if context.user_data:
+        await update.message.reply_text(
+            "ℹ️ Ro'yxatdan o'tish davom etmoqda.\n"
+            "Iltimos, ma'lumotlaringizni kiritishni davom etting.\n"
+            "Bekor qilish uchun /cancel yuboring.",
+        )
+        return ISM
 
     await update.message.reply_text(
         "Assalomu Alaykum! Dusel Company botiga xush kelibsiz! 👋\n\n"

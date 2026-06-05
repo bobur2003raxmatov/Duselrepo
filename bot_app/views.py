@@ -3,6 +3,7 @@ import json
 import logging
 import queue
 import threading
+import time
 
 from django.http import HttpResponse, HttpResponseForbidden
 from django.views import View
@@ -74,54 +75,83 @@ def _patch_date(data: dict) -> dict:
     return data
 
 
+def _get_valid_state() -> tuple | None:
+    """(_bot_state) ni tekshirib, loop tirik bo'lsa qaytaradi."""
+    state = _bot_state
+    if state is None:
+        from bot_app.apps import get_bot_state
+        state = get_bot_state()
+    if state is None:
+        return None
+    app, loop = state
+    if loop.is_closed():
+        return None
+    return state
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class WebhookView(View):
 
     def post(self, request, token):
-        from config import TOKEN as _TOKEN
+        t0 = time.monotonic()
+
+        # ── Token tekshiruv ───────────────────────────────────────
+        try:
+            from config import TOKEN as _TOKEN
+        except Exception as e:
+            logger.error(f"[wh] config import xatosi: {e}")
+            return HttpResponse(status=200)
+
         if token != _TOKEN:
             return HttpResponseForbidden("Invalid token")
 
+        # ── JSON parse ────────────────────────────────────────────
         try:
             data = _patch_date(json.loads(request.body))
         except Exception as e:
-            logger.warning(f"Webhook JSON xatosi: {e}")
+            logger.warning(f"[wh] JSON xatosi: {e}")
             return HttpResponse(status=200)
 
-        from bot_app.apps import _bot_thread_alive
-
-        if not _bot_thread_alive():
-            _ensure_bot_started()
-
-        # views._bot_state dan olish (apps._bot_state bilan sinxron)
-        state = _bot_state
-        if state is None:
-            # apps.py dan ham tekshirish (birinchi request da race condition bo'lishi mumkin)
-            from bot_app.apps import get_bot_state
-            state = get_bot_state()
-
         uid = data.get("update_id", "?")
+        logger.info(f"[wh] update#{uid} keldi (t={time.monotonic()-t0:.3f}s)")
 
-        if state is not None:
-            app, loop = state
-            try:
-                from telegram import Update
-                update = Update.de_json(data, app.bot)
-                asyncio.run_coroutine_threadsafe(app.process_update(update), loop)
-                logger.info(f"[wh] update#{uid} → process_update (pid={__import__('os').getpid()})")
-            except Exception as e:
-                logger.exception(f"process_update xatosi: {e}")
-        else:
-            logger.info(f"[wh] update#{uid} → pending (bot tayyor emas)")
-            try:
-                _pending.put_nowait(data)
-            except queue.Full:
-                logger.warning("Pending queue to'la — update tashlab yuborildi.")
+        # ── Bot holati ────────────────────────────────────────────
+        try:
+            from bot_app.apps import _bot_thread_alive
+            if not _bot_thread_alive():
+                logger.info(f"[wh] update#{uid} → bot thread yo'q, ishga tushirilmoqda")
+                _ensure_bot_started()
 
+            state = _get_valid_state()
+
+            if state is not None:
+                app, loop = state
+                try:
+                    from telegram import Update
+                    tg_update = Update.de_json(data, app.bot)
+                    asyncio.run_coroutine_threadsafe(app.process_update(tg_update), loop)
+                    logger.info(f"[wh] update#{uid} → process_update (t={time.monotonic()-t0:.3f}s)")
+                except Exception as e:
+                    logger.exception(f"[wh] update#{uid} process_update xatosi: {e}")
+            else:
+                logger.info(f"[wh] update#{uid} → pending (bot tayyor emas, t={time.monotonic()-t0:.3f}s)")
+                try:
+                    _pending.put_nowait(data)
+                except queue.Full:
+                    logger.warning(f"[wh] Pending queue to'la — update#{uid} tashlab yuborildi.")
+
+        except Exception as e:
+            logger.exception(f"[wh] update#{uid} kutilmagan xato: {e}")
+
+        elapsed = time.monotonic() - t0
+        logger.info(f"[wh] update#{uid} → 200 ({elapsed*1000:.1f}ms)")
         return HttpResponse(status=200)
 
     def get(self, request, token):
-        from config import TOKEN as _TOKEN
+        try:
+            from config import TOKEN as _TOKEN
+        except Exception:
+            return HttpResponseForbidden()
         if token != _TOKEN:
             return HttpResponseForbidden()
         from bot_app.apps import get_bot_app

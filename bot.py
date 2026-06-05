@@ -114,16 +114,17 @@ from sorov_handlers import (
     limit_start, limit_dokon_olish, limit_summa_olish,
 )
 
-# ── Logging: console + file ───────────────────────────────────────
-from logging.handlers import RotatingFileHandler
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    level=logging.INFO,
-    handlers=[
-        RotatingFileHandler("bot.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
+# ── Logging: faqat python bot.py da ishlatilganda ────────────────
+if __name__ == "__main__":
+    from logging.handlers import RotatingFileHandler
+    logging.basicConfig(
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        level=logging.INFO,
+        handlers=[
+            RotatingFileHandler("bot.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
 logger = logging.getLogger(__name__)
 
 

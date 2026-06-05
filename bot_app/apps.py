@@ -8,7 +8,6 @@ from django.apps import AppConfig
 
 logger = logging.getLogger(__name__)
 
-# Atomic pair: (Application, running_loop) — har ikkalasi bir xil init dan
 _bot_state: tuple | None = None
 _ready = False
 
@@ -21,10 +20,15 @@ def _bot_thread_alive() -> bool:
 
 
 def get_bot_state() -> tuple | None:
-    """(app, loop) juftligini qaytaradi yoki None."""
     if not _bot_thread_alive():
         return None
-    return _bot_state
+    state = _bot_state
+    if state is None:
+        return None
+    _, loop = state
+    if loop.is_closed():
+        return None
+    return state
 
 
 def get_bot_app():
@@ -75,7 +79,7 @@ def _register_postfork_or_start():
 
 def _start_bot_thread():
     global _bot_state
-    _bot_state = None  # Eski holatni tozalaish
+    _bot_state = None
     loop = asyncio.new_event_loop()
     t = threading.Thread(target=loop.run_forever, daemon=True, name="telegram-bot")
     t.start()
@@ -113,9 +117,8 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
                 except Exception as e:
                     logger.warning(f"⚠️  set_webhook: {e}")
             else:
-                logger.warning("⚠️  WEBHOOK_URL yo'q.")
+                logger.warning("⚠️  WEBHOOK_URL yo'q — webhook o'rnatilmadi.")
 
-            # Atomik juftlik — app va uning loopi HAR DOIM mos keladi
             _bot_state = (app, my_loop)
             from bot_app.views import set_bot_state
             set_bot_state(app, my_loop)
