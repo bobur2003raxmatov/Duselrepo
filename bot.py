@@ -128,9 +128,32 @@ if __name__ == "__main__":
 logger = logging.getLogger(__name__)
 
 
+def _make_request():
+    """PythonAnywhere proksi sozlamasi bilan HTTPXRequest yaratadi."""
+    import os
+    from telegram.request import HTTPXRequest
+    proxy = (
+        os.environ.get("https_proxy")
+        or os.environ.get("HTTPS_PROXY")
+        or os.environ.get("http_proxy")
+        or os.environ.get("HTTP_PROXY")
+    )
+    if proxy:
+        logger.info(f"Proksi ishlatilmoqda: {proxy}")
+        return HTTPXRequest(proxy=proxy, connection_pool_size=8, read_timeout=30, write_timeout=30, connect_timeout=15)
+    return HTTPXRequest(connection_pool_size=8, read_timeout=30, write_timeout=30, connect_timeout=15)
+
+
 def build_application(webhook_mode: bool = False, post_init_cb=None) -> Application:
     from bot_app.persistence import DjangoPersistence
-    builder = Application.builder().token(TOKEN).persistence(DjangoPersistence())
+    req = _make_request()
+    builder = (
+        Application.builder()
+        .token(TOKEN)
+        .persistence(DjangoPersistence())
+        .request(req)
+        .get_updates_request(req)
+    )
     if webhook_mode:
         builder = builder.updater(None)
     if post_init_cb is not None:
