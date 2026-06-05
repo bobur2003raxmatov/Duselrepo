@@ -8,37 +8,17 @@ from django.apps import AppConfig
 
 logger = logging.getLogger(__name__)
 
-_bot_state: tuple | None = None
+_app   = None
+_loop  = None
 _ready = False
 
 
-def _bot_thread_alive() -> bool:
-    return any(
-        t.name == "telegram-bot" and t.is_alive()
-        for t in threading.enumerate()
-    )
-
-
-def get_bot_state() -> tuple | None:
-    if not _bot_thread_alive():
-        return None
-    state = _bot_state
-    if state is None:
-        return None
-    _, loop = state
-    if loop.is_closed():
-        return None
-    return state
-
-
 def get_bot_app():
-    s = get_bot_state()
-    return s[0] if s else None
+    return _app
 
 
 def get_bot_loop():
-    s = get_bot_state()
-    return s[1] if s else None
+    return _loop
 
 
 class BotAppConfig(AppConfig):
@@ -78,8 +58,9 @@ def _register_postfork_or_start():
 
 
 def _start_bot_thread():
-    global _bot_state
-    _bot_state = None
+    global _app, _loop
+    _app = None
+    _loop = None
     loop = asyncio.new_event_loop()
     t = threading.Thread(target=loop.run_forever, daemon=True, name="telegram-bot")
     t.start()
@@ -88,7 +69,7 @@ def _start_bot_thread():
 
 
 async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
-    global _bot_state
+    global _app, _loop
 
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if project_dir not in sys.path:
@@ -119,9 +100,8 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             else:
                 logger.warning("⚠️  WEBHOOK_URL yo'q — webhook o'rnatilmadi.")
 
-            _bot_state = (app, my_loop)
-            from bot_app.views import set_bot_state
-            set_bot_state(app, my_loop)
+            _app  = app
+            _loop = my_loop
             logger.info(f"✅ Bot tayyor (pid={os.getpid()}).")
             return
 
