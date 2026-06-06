@@ -79,22 +79,24 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
     from config import TOKEN, WEBHOOK_URL
 
     for attempt in range(6):
+        app = None
         try:
             app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
             app.add_error_handler(error_handler)
 
-            await app.initialize()
-            await app.start()
+            await asyncio.wait_for(app.initialize(), timeout=40)
+            await asyncio.wait_for(app.start(), timeout=20)
 
             if WEBHOOK_URL:
                 wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
                 try:
-                    info = await app.bot.get_webhook_info()
-                    if info.url != wh_url:
-                        await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
-                        logger.info(f"Webhook o'rnatildi: {wh_url}")
-                    else:
-                        logger.info(f"Webhook to'g'ri: {wh_url}")
+                    await asyncio.wait_for(
+                        app.bot.set_webhook(url=wh_url, drop_pending_updates=False),
+                        timeout=20,
+                    )
+                    logger.info(f"Webhook o'rnatildi: {wh_url}")
+                except asyncio.TimeoutError:
+                    logger.warning("set_webhook timeout — keyingi urinishda qayta harakat qilinadi")
                 except Exception as e:
                     logger.warning(f"set_webhook: {e}")
             else:
@@ -105,9 +107,15 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             logger.info(f"Bot tayyor (pid={os.getpid()}).")
             return
 
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
             delay = 2 ** attempt
             logger.warning(f"Bot init xatosi (urinish {attempt + 1}/6): {e} — {delay}s kutiladi")
+            if app is not None:
+                try:
+                    await app.stop()
+                    await app.shutdown()
+                except Exception:
+                    pass
             await asyncio.sleep(delay)
 
     logger.error(f"Bot 6 urinishdan keyin ham ishga tushmadi! (pid={os.getpid()})")
