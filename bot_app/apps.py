@@ -76,7 +76,6 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
         sys.path.insert(0, project_dir)
 
     from bot import build_application, post_init_webhook, error_handler
-    from config import TOKEN, WEBHOOK_URL
 
     for attempt in range(6):
         app = None
@@ -86,21 +85,6 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
 
             await asyncio.wait_for(app.initialize(), timeout=40)
             await asyncio.wait_for(app.start(), timeout=20)
-
-            if WEBHOOK_URL:
-                wh_url = f"{WEBHOOK_URL.rstrip('/')}/webhook/{TOKEN}/"
-                try:
-                    await asyncio.wait_for(
-                        app.bot.set_webhook(url=wh_url, drop_pending_updates=False),
-                        timeout=20,
-                    )
-                    logger.info(f"Webhook o'rnatildi: {wh_url}")
-                except asyncio.TimeoutError:
-                    logger.warning("set_webhook timeout — keyingi urinishda qayta harakat qilinadi")
-                except Exception as e:
-                    logger.warning(f"set_webhook: {e}")
-            else:
-                logger.warning("WEBHOOK_URL yo'q — webhook o'rnatilmadi.")
 
             _app  = app
             _loop = my_loop
@@ -112,8 +96,8 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             logger.warning(f"Bot init xatosi (urinish {attempt + 1}/6): {e} — {delay}s kutiladi")
             if app is not None:
                 try:
-                    await app.stop()
-                    await app.shutdown()
+                    await asyncio.wait_for(app.stop(), timeout=10)
+                    await asyncio.wait_for(app.shutdown(), timeout=10)
                 except Exception:
                     pass
             await asyncio.sleep(delay)
