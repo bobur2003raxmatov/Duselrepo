@@ -68,6 +68,15 @@ def _start_bot_thread():
     logger.info(f"Bot thread ishga tushirildi (pid={os.getpid()}).")
 
 
+def _dbg(msg: str) -> None:
+    """Logger bypass — to'g'ridan stderr ga yozadi."""
+    try:
+        sys.stderr.write(msg + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
     global _app, _loop
 
@@ -80,26 +89,41 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
     for attempt in range(6):
         app = None
         try:
+            _dbg(f"[init] urinish {attempt + 1}/6 pid={os.getpid()}")
             app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
             app.add_error_handler(error_handler)
 
-            await asyncio.wait_for(app.initialize(), timeout=40)
-            await asyncio.wait_for(app.start(), timeout=20)
+            _dbg("[init] app.initialize() boshlandi")
+            await asyncio.wait_for(app.initialize(), timeout=60)
+            _dbg("[init] app.initialize() tugadi — app.start() boshlandi")
 
+            # wait_for ishlatilmaydi: cancellation cleanup ham hang qiladi
+            await app.start()
+
+            _dbg("[init] app.start() tugadi")
             _app  = app
             _loop = my_loop
             logger.info(f"Bot tayyor (pid={os.getpid()}).")
+            _dbg(f"[init] Bot tayyor pid={os.getpid()}")
             return
 
-        except (asyncio.TimeoutError, Exception) as e:
+        except Exception as e:
             delay = 2 ** attempt
-            logger.warning(f"Bot init xatosi (urinish {attempt + 1}/6): {e} — {delay}s kutiladi")
+            logger.warning(
+                f"Bot init xatosi (urinish {attempt + 1}/6): "
+                f"{type(e).__name__}: {e} — {delay}s kutiladi"
+            )
+            _dbg(f"[init] XATO urinish {attempt + 1}: {type(e).__name__}: {e}")
             if app is not None:
                 try:
-                    await asyncio.wait_for(app.stop(), timeout=10)
-                    await asyncio.wait_for(app.shutdown(), timeout=10)
+                    await asyncio.wait_for(app.stop(), timeout=5)
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(app.shutdown(), timeout=5)
                 except Exception:
                     pass
             await asyncio.sleep(delay)
 
     logger.error(f"Bot 6 urinishdan keyin ham ishga tushmadi! (pid={os.getpid()})")
+    _dbg(f"[init] 6 urinish — muvaffaqiyatsiz pid={os.getpid()}")
