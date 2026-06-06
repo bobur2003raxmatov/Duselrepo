@@ -52,14 +52,14 @@ def _register_postfork_or_start():
             logger.info(f"[postfork] pid={os.getpid()} — bot ishga tushmoqda")
             _start_bot_thread()
 
-        logger.info("✅ uWSGI postfork hook ro'yxatdan o'tdi.")
+        logger.info("uWSGI postfork hook ro'yxatdan o'tdi.")
     except ImportError:
         _start_bot_thread()
 
 
 def _start_bot_thread():
     global _app, _loop
-    _app = None
+    _app  = None
     _loop = None
     loop = asyncio.new_event_loop()
     t = threading.Thread(target=loop.run_forever, daemon=True, name="telegram-bot")
@@ -92,24 +92,22 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
                     info = await app.bot.get_webhook_info()
                     if info.url != wh_url:
                         await app.bot.set_webhook(url=wh_url, drop_pending_updates=True)
-                        logger.info(f"✅ Webhook o'rnatildi: {wh_url}")
+                        logger.info(f"Webhook o'rnatildi: {wh_url}")
                     else:
-                        logger.info(f"✅ Webhook to'g'ri: {wh_url}")
+                        logger.info(f"Webhook to'g'ri: {wh_url}")
                 except Exception as e:
-                    logger.warning(f"⚠️  set_webhook: {e}")
+                    logger.warning(f"set_webhook: {e}")
             else:
-                logger.warning("⚠️  WEBHOOK_URL yo'q — webhook o'rnatilmadi.")
+                logger.warning("WEBHOOK_URL yo'q — webhook o'rnatilmadi.")
 
             _app  = app
             _loop = my_loop
-            logger.info(f"✅ Bot tayyor (pid={os.getpid()}).")
+            logger.info(f"Bot tayyor (pid={os.getpid()}).")
             return
 
         except Exception as e:
             delay = 2 ** attempt
-            logger.warning(
-                f"⚠️  Bot init xatosi (urinish {attempt + 1}/6): {e} — {delay}s kutiladi"
-            )
+            logger.warning(f"Bot init xatosi (urinish {attempt + 1}/6): {e} — {delay}s kutiladi")
             await asyncio.sleep(delay)
 
-    logger.error(f"❌ Bot 6 urinishdan keyin ham ishga tushmadi! (pid={os.getpid()})")
+    logger.error(f"Bot 6 urinishdan keyin ham ishga tushmadi! (pid={os.getpid()})")

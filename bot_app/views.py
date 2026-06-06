@@ -21,7 +21,7 @@ class WebhookView(View):
             from bot_app import apps as bot_apps
             app  = bot_apps._app
             loop = bot_apps._loop
-            if app is None or loop is None:
+            if app is None or loop is None or loop.is_closed():
                 logger.warning("[wh] Bot hali tayyor emas — update o'tkazib yuborildi")
                 return HttpResponse(status=200)
             data = json.loads(request.body)
@@ -36,5 +36,5 @@ class WebhookView(View):
 
     def get(self, request, token):
         from bot_app import apps as bot_apps
-        status = "✅ Bot ishlayapti" if bot_apps._app else "⚠️ Bot tayyor emas"
+        status = "Bot ishlayapti" if bot_apps._app else "Bot tayyor emas"
         return HttpResponse(status)

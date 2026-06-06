@@ -15,7 +15,7 @@ SECRET_KEY = os.environ.get(
     "django-insecure-dusel-bot-please-change-in-production-xyz123",
 )
 
-DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
 
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")
 
@@ -85,6 +85,50 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ── Logging ───────────────────────────────────────────────────────
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "main": {
+            "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+    },
+    "handlers": {
+        "stderr": {
+            "class": "logging.StreamHandler",
+            "formatter": "main",
+        },
+    },
+    "root": {
+        "handlers": ["stderr"],
+        "level": "WARNING",
+    },
+    "loggers": {
+        "bot_app": {
+            "handlers": ["stderr"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "telegram": {
+            "handlers": ["stderr"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "httpx": {
+            "handlers": ["stderr"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["stderr"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+}
 
 # ══════════════════════════════════════════════════════════════════
 # Telegram Bot sozlamalari
