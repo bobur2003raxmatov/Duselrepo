@@ -130,7 +130,6 @@ logger = logging.getLogger(__name__)
 
 def _make_request():
     """PythonAnywhere proksi sozlamasi bilan HTTPXRequest yaratadi."""
-    import os
     from telegram.request import HTTPXRequest
     proxy = (
         os.environ.get("https_proxy")
@@ -138,10 +137,24 @@ def _make_request():
         or os.environ.get("http_proxy")
         or os.environ.get("HTTP_PROXY")
     )
+    # PythonAnywhere barcha tashqi ulanishlar uchun proksi talab qiladi
+    if not proxy and os.environ.get("PYTHONANYWHERE_SITE"):
+        proxy = "http://proxy.server:3128"
     if proxy:
         logger.info(f"Proksi ishlatilmoqda: {proxy}")
-        return HTTPXRequest(proxy=proxy, connection_pool_size=8, read_timeout=30, write_timeout=30, connect_timeout=15)
-    return HTTPXRequest(connection_pool_size=8, read_timeout=30, write_timeout=30, connect_timeout=15)
+        return HTTPXRequest(
+            proxy=proxy,
+            connection_pool_size=4,
+            read_timeout=30,
+            write_timeout=30,
+            connect_timeout=20,
+        )
+    return HTTPXRequest(
+        connection_pool_size=4,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=20,
+    )
 
 
 def build_application(webhook_mode: bool = False, post_init_cb=None) -> Application:
