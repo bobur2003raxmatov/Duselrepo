@@ -68,15 +68,6 @@ def _start_bot_thread():
     logger.info(f"Bot thread ishga tushirildi (pid={os.getpid()}).")
 
 
-def _dbg(msg: str) -> None:
-    """Logger bypass — to'g'ridan stderr ga yozadi."""
-    try:
-        sys.stderr.write(msg + "\n")
-        sys.stderr.flush()
-    except Exception:
-        pass
-
-
 async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
     global _app, _loop
 
@@ -89,32 +80,47 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
     for attempt in range(6):
         app = None
         try:
-            _dbg(f"[init] urinish {attempt + 1}/6 pid={os.getpid()}")
+            logger.info(f"[init] urinish {attempt + 1}/6 pid={os.getpid()}")
             app = build_application(webhook_mode=True, post_init_cb=post_init_webhook)
             app.add_error_handler(error_handler)
 
-            _dbg("[init] app.initialize() boshlandi")
+            logger.info("[init] app.initialize() ...")
             await asyncio.wait_for(app.initialize(), timeout=60)
-            _dbg("[init] app.initialize() tugadi — app.start() background task")
+            logger.info("[init] app.initialize() TUGADI")
 
-            # app.start() ni background task sifatida ishga tushiramiz.
-            # PTB/Python 3.13 da create_task(_update_fetcher) qatorida hang bo'ladi.
-            # Webhook mode da _update_fetcher kerak emas — process_update to'g'ridan
-            # chaqiriladi. Biz faqat _running=True va scheduler ishga tushishini kutamiz.
-            asyncio.ensure_future(app.start())
+            # APScheduler.start() event loop thread ichidan chaqirilganda
+            # call_soon_threadsafe bloklaydi. Shuning uchun uni alohida
+            # daemon threadda ishlatamiz (executor threadida hech qanday
+            # event loop yo'q, APScheduler to'g'ri ishlaydi).
+            if app.job_queue:
+                scheduler = app.job_queue.scheduler
+                scheduler._eventloop = my_loop  # to'g'ri loopni ko'rsatamiz
 
-            # _running = True app.start() boshlanishi bilan o'rnatiladi (await dan oldin).
-            # Scheduler started chiqishi bilan job queue ham tayyor.
-            # Shundan keyin bot webhook uchun tayyor hisoblanadi.
-            deadline = asyncio.get_event_loop().time() + 10
-            while not app.running:
-                if asyncio.get_event_loop().time() > deadline:
-                    logger.warning("app.start() 10s ichida _running o'rnatmadi — majburan davom etilmoqda")
-                    app._running = True
-                    break
-                await asyncio.sleep(0.1)
+                def _start_scheduler():
+                    scheduler.start()
 
-            _dbg(f"[init] app.running={app.running} — _app o'rnatilmoqda")
+                logger.info("[init] scheduler executor threadda ishga tushmoqda...")
+                try:
+                    await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(None, _start_scheduler),
+                        timeout=15,
+                    )
+                    logger.info("[init] scheduler ishga tushdi")
+                except asyncio.TimeoutError:
+                    logger.warning("[init] scheduler.start() timeout — job queue o'chirildi")
+                    app._job_queue = None
+
+            # app._running ni qo'lda o'rnatamiz (app.start() o'rniga)
+            app._running = True
+
+            # Persistence updater background task
+            if app.persistence:
+                asyncio.ensure_future(app._persistence_updater())
+                logger.info("[init] persistence_updater task yaratildi")
+
+            # _update_fetcher webhook mode da kerak emas —
+            # process_update to'g'ridan views.py dan chaqiriladi
+
             _app  = app
             _loop = my_loop
             logger.info(f"Bot tayyor (pid={os.getpid()}).")
@@ -126,7 +132,6 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
                 f"Bot init xatosi (urinish {attempt + 1}/6): "
                 f"{type(e).__name__}: {e} — {delay}s kutiladi"
             )
-            _dbg(f"[init] XATO urinish {attempt + 1}: {type(e).__name__}: {e}")
             if app is not None:
                 try:
                     await asyncio.wait_for(app.stop(), timeout=5)
@@ -139,4 +144,3 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             await asyncio.sleep(delay)
 
     logger.error(f"Bot 6 urinishdan keyin ham ishga tushmadi! (pid={os.getpid()})")
-    _dbg(f"[init] 6 urinish — muvaffaqiyatsiz pid={os.getpid()}")
