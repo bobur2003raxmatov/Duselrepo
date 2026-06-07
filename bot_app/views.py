@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 
 from django.http import HttpResponse
 from django.views import View
@@ -22,23 +23,18 @@ class WebhookView(View):
             app  = bot_apps._app
             loop = bot_apps._loop
             if app is None or loop is None or loop.is_closed():
-                # 503 qaytaramiz — Telegram qayta urinadi (200 bossa "yetkazildi" deb o'ylaydi)
-                print("[bot_app][wh] Bot hali tayyor emas — 503 qaytarildi", flush=True)
-                return HttpResponse("Bot initializing", status=503)
-            data = json.loads(request.body)
-            uid  = data.get("update_id", "?")
+                # 503 — Telegram qayta urinadi (200 bossa "yetkazildi" deb hisoblaydi)
+                return HttpResponse(status=503)
+            data   = json.loads(request.body)
             from telegram import Update
             update = Update.de_json(data, app.bot)
             asyncio.run_coroutine_threadsafe(app.process_update(update), loop)
-            print(f"[bot_app][wh] update#{uid} -> process_update OK", flush=True)
         except Exception as e:
-            print(f"[bot_app][wh] Webhook xato: {e}", flush=True)
             logger.exception(f"[wh] Webhook xato: {e}")
         return HttpResponse(status=200)
 
     def get(self, request, token):
         from bot_app import apps as bot_apps
-        import os
         app_ready = bot_apps._app is not None
         loop_ok   = bot_apps._loop is not None and not bot_apps._loop.is_closed()
         pid       = os.getpid()
