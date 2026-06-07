@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 _app   = None
 _loop  = None
 _ready = False
+_restart_lock = threading.Lock()
 
 
 def _log(msg: str) -> None:
@@ -25,6 +26,30 @@ def get_bot_app():
 
 def get_bot_loop():
     return _loop
+
+
+def _bot_thread_alive() -> bool:
+    """'telegram-bot' nomli daemon thread hali ishlayaptimi?"""
+    return any(t.name == "telegram-bot" and t.is_alive() for t in threading.enumerate())
+
+
+def ensure_bot_running() -> bool:
+    """Loop o'lik yoki fork dan keyin ishlamayotgan bo'lsa, qayta ishga tushiradi.
+    True qaytarsa bot allaqachon tayyor; False qaytarsa hali initializatsiya bo'lmagan.
+    """
+    current_loop = _loop
+    if current_loop is not None and current_loop.is_running():
+        return _app is not None
+    if _bot_thread_alive():
+        # Thread allaqachon ishlamoqda — init hali tugamagan
+        return False
+    with _restart_lock:
+        # Double-check inside the lock
+        if _bot_thread_alive():
+            return False
+        _log(f"[ensure] bot thread yo'q (fork?) — qayta ishga tushirilmoqda pid={os.getpid()}")
+        _start_bot_thread()
+    return False
 
 
 class BotAppConfig(AppConfig):
@@ -70,6 +95,13 @@ def _start_bot_thread():
     loop = asyncio.new_event_loop()
     t = threading.Thread(target=loop.run_forever, daemon=True, name="telegram-bot")
     t.start()
+    # loop.is_running() becomes True once run_forever() enters the loop.
+    # Give it a moment before scheduling the init coroutine.
+    import time
+    for _ in range(20):
+        if loop.is_running():
+            break
+        time.sleep(0.05)
     asyncio.run_coroutine_threadsafe(_init_bot_async(loop), loop)
     _log(f"Bot thread ishga tushirildi (pid={os.getpid()}).")
 

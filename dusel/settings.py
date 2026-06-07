@@ -69,7 +69,12 @@ DATABASES = {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": _db_file,
         "OPTIONS": {
-            "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+            "init_command": (
+                "PRAGMA journal_mode=WAL; "
+                "PRAGMA synchronous=NORMAL; "
+                "PRAGMA busy_timeout=10000;"   # 10s lock wait, then OperationalError
+            ),
+            "timeout": 20,  # Django sqlite3 connection timeout (seconds)
         },
     }
 }
