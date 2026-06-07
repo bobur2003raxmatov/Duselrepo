@@ -8,6 +8,7 @@ import json
 import logging
 from collections import defaultdict
 
+from asgiref.sync import sync_to_async
 from telegram.ext import BasePersistence, PersistenceInput
 
 logger = logging.getLogger(__name__)
@@ -29,32 +30,36 @@ class DjangoPersistence(BasePersistence):
     # ── Conversation ────────────────────────────────────────────────
 
     async def get_conversations(self, name: str) -> dict:
-        from bot_app.models import BotConversationState
-        result = {}
-        try:
-            async for row in BotConversationState.objects.filter(handler_name=name):
-                if row.state is not None:
-                    key = tuple(json.loads(row.conv_key))
-                    result[key] = row.state
-        except Exception as e:
-            logger.warning(f"[Persistence] get_conversations xatosi: {e}")
-        return result
+        def _get():
+            from bot_app.models import BotConversationState
+            result = {}
+            try:
+                for row in BotConversationState.objects.filter(handler_name=name):
+                    if row.state is not None:
+                        key = tuple(json.loads(row.conv_key))
+                        result[key] = row.state
+            except Exception as e:
+                logger.warning(f"[Persistence] get_conversations xatosi: {e}")
+            return result
+        return await sync_to_async(_get, thread_sensitive=False)()
 
     async def update_conversation(self, name: str, key, new_state) -> None:
-        from bot_app.models import BotConversationState
         key_str = json.dumps(list(key))
-        try:
-            if new_state is None:
-                await BotConversationState.objects.filter(
-                    handler_name=name, conv_key=key_str
-                ).adelete()
-            else:
-                await BotConversationState.objects.aupdate_or_create(
-                    handler_name=name, conv_key=key_str,
-                    defaults={"state": int(new_state)},
-                )
-        except Exception as e:
-            logger.warning(f"[Persistence] update_conversation xatosi: {e}")
+        def _update():
+            from bot_app.models import BotConversationState
+            try:
+                if new_state is None:
+                    BotConversationState.objects.filter(
+                        handler_name=name, conv_key=key_str
+                    ).delete()
+                else:
+                    BotConversationState.objects.update_or_create(
+                        handler_name=name, conv_key=key_str,
+                        defaults={"state": int(new_state)},
+                    )
+            except Exception as e:
+                logger.warning(f"[Persistence] update_conversation xatosi: {e}")
+        await sync_to_async(_update, thread_sensitive=False)()
 
     # ── No-op metodlar (store_data=False) ──────────────────────────
 

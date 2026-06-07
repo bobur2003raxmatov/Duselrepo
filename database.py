@@ -1,11 +1,12 @@
 """
-Ma'lumotlar bazasi qatlami — Django ORM orqali.
+Ma'lumotlar bazasi qatlami — Django ORM orqali (sync + sync_to_async wrapper).
 
-Barcha funksiya imzolari avvalgi aiosqlite versiyasi bilan bir xil saqlanadi,
-shuning uchun handlerlar o'zgarishsiz ishlaydi.
+Barcha public funksiyalar sync_to_async bilan o'ralgan, shuning uchun
+handlerlar avvalgiday `await db.func()` bilan chaqiraveradilar.
 """
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 
 from asgiref.sync import sync_to_async
@@ -32,98 +33,142 @@ def _models():
 
 
 # ── Raw SQL yordamchi ─────────────────────────────────────────────────────────
-async def _raw_one(sql: str, params=None):
-    def _run():
-        with connection.cursor() as cur:
-            cur.execute(sql, params or [])
-            return cur.fetchone()
-    return await sync_to_async(_run)()
+def _sync_raw_one(sql: str, params=None):
+    with connection.cursor() as cur:
+        cur.execute(sql, params or [])
+        return cur.fetchone()
 
 
-async def _raw_all(sql: str, params=None) -> list:
-    def _run():
-        with connection.cursor() as cur:
-            cur.execute(sql, params or [])
-            return cur.fetchall()
-    return await sync_to_async(_run)()
+@sync_to_async(thread_sensitive=False)
+def _raw_one(sql: str, params=None):
+    return _sync_raw_one(sql, params)
+
+
+def _sync_raw_all(sql: str, params=None) -> list:
+    with connection.cursor() as cur:
+        cur.execute(sql, params or [])
+        return cur.fetchall()
+
+
+@sync_to_async(thread_sensitive=False)
+def _raw_all(sql: str, params=None) -> list:
+    return _sync_raw_all(sql, params)
 
 
 # ── DB versiyasi (stub — Django migratsiyalar boshqaradi) ────────────────────
-async def get_db_version() -> int:
+@sync_to_async(thread_sensitive=False)
+def get_db_version() -> int:
     return 1
 
 
-async def set_db_version(version: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def set_db_version(version: int) -> None:
     pass
 
 
 # ── init_db (Django migratsiyalar manage.py migrate orqali bajariladi) ───────
-async def init_db():
+@sync_to_async(thread_sensitive=False)
+def init_db():
     """
     Jadvallar manage.py migrate orqali yaratiladi.
     Bu funksiya faqat xotira keshini to'ldiradi va asosiy adminni qo'shadi.
     """
     (_, _, _, _, _, _, _, _, _, _, _, _, AdminUser, _, _) = _models()
-    await AdminUser.objects.aget_or_create(user_id=ADMIN_ID)
-    await _reload_admin_cache()
+    AdminUser.objects.get_or_create(user_id=ADMIN_ID)
+    _sync_reload_admin_cache()
 
 
 # ── Adminlar keshi ────────────────────────────────────────────────────────────
 _admin_cache: set[int] = set()
+_admin_lock = threading.Lock()
 
 
-async def _reload_admin_cache() -> None:
+def _sync_reload_admin_cache() -> None:
     (_, _, _, _, _, _, _, _, _, _, _, _, AdminUser, _, _) = _models()
-    ids = [r async for r in AdminUser.objects.values_list("user_id", flat=True)]
-    _admin_cache.clear()
-    _admin_cache.update(ids)
-    _admin_cache.add(ADMIN_ID)
+    ids = list(AdminUser.objects.values_list("user_id", flat=True))
+    with _admin_lock:
+        _admin_cache.clear()
+        _admin_cache.update(ids)
+        _admin_cache.add(ADMIN_ID)
 
 
-async def get_admins() -> list[int]:
+@sync_to_async(thread_sensitive=False)
+def _reload_admin_cache() -> None:
+    _sync_reload_admin_cache()
+
+
+def _sync_get_admins() -> list[int]:
     if not _admin_cache:
-        await _reload_admin_cache()
+        _sync_reload_admin_cache()
     return list(_admin_cache)
 
 
-async def is_admin(user_id: int) -> bool:
+@sync_to_async(thread_sensitive=False)
+def get_admins() -> list[int]:
+    return _sync_get_admins()
+
+
+def _sync_is_admin(user_id: int) -> bool:
     if user_id == ADMIN_ID:
         return True
     if not _admin_cache:
-        await _reload_admin_cache()
+        _sync_reload_admin_cache()
     return user_id in _admin_cache
 
 
-async def add_admin(user_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def is_admin(user_id: int) -> bool:
+    return _sync_is_admin(user_id)
+
+
+def _sync_add_admin(user_id: int) -> None:
     (_, _, _, _, _, _, _, _, _, _, _, _, AdminUser, _, _) = _models()
-    await AdminUser.objects.aget_or_create(user_id=user_id)
-    _admin_cache.add(user_id)
+    AdminUser.objects.get_or_create(user_id=user_id)
+    with _admin_lock:
+        _admin_cache.add(user_id)
 
 
-async def remove_admin(user_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def add_admin(user_id: int) -> None:
+    _sync_add_admin(user_id)
+
+
+def _sync_remove_admin(user_id: int) -> None:
     if user_id == ADMIN_ID:
         return
     (_, _, _, _, _, _, _, _, _, _, _, _, AdminUser, _, _) = _models()
-    await AdminUser.objects.filter(user_id=user_id).adelete()
-    _admin_cache.discard(user_id)
+    AdminUser.objects.filter(user_id=user_id).delete()
+    with _admin_lock:
+        _admin_cache.discard(user_id)
+
+
+@sync_to_async(thread_sensitive=False)
+def remove_admin(user_id: int) -> None:
+    _sync_remove_admin(user_id)
 
 
 # ── Xodim ─────────────────────────────────────────────────────────────────────
-async def get_xodim(user_id: int) -> tuple | None:
+def _sync_get_xodim(user_id: int) -> tuple | None:
     """Returns (status, topic_id, ism, lavozim, filial, kod)"""
     (Xodim, *_) = _models()
     try:
-        x = await Xodim.objects.aget(user_id=user_id)
+        x = Xodim.objects.get(user_id=user_id)
         return (x.status, x.topic_id, x.ism, x.lavozim, x.filial, x.kod)
     except Xodim.DoesNotExist:
         return None
 
 
-async def insert_xodim(user_id, ism, lavozim, kod, filial,
-                       telefon1, telefon2, tugilgan_kun):
+@sync_to_async(thread_sensitive=False)
+def get_xodim(user_id: int) -> tuple | None:
+    return _sync_get_xodim(user_id)
+
+
+@sync_to_async(thread_sensitive=False)
+def insert_xodim(user_id, ism, lavozim, kod, filial,
+                 telefon1, telefon2, tugilgan_kun):
     (Xodim, *_) = _models()
     sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    await Xodim.objects.aupdate_or_create(
+    Xodim.objects.update_or_create(
         user_id=user_id,
         defaults=dict(
             ism=ism, lavozim=lavozim, kod=kod, filial=filial,
@@ -133,75 +178,91 @@ async def insert_xodim(user_id, ism, lavozim, kod, filial,
     )
 
 
-async def approve_xodim(user_id: int, topic_id: int):
+@sync_to_async(thread_sensitive=False)
+def approve_xodim(user_id: int, topic_id: int):
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).aupdate(status="approved", topic_id=topic_id)
+    Xodim.objects.filter(user_id=user_id).update(status="approved", topic_id=topic_id)
 
 
-async def clear_topic_id(user_id: int):
+@sync_to_async(thread_sensitive=False)
+def clear_topic_id(user_id: int):
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).aupdate(topic_id=None)
+    Xodim.objects.filter(user_id=user_id).update(topic_id=None)
 
 
-async def reject_xodim(user_id: int):
+@sync_to_async(thread_sensitive=False)
+def reject_xodim(user_id: int):
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).aupdate(status="rejected")
+    Xodim.objects.filter(user_id=user_id).update(status="rejected")
 
 
-async def block_xodim(user_id: int):
+@sync_to_async(thread_sensitive=False)
+def block_xodim(user_id: int):
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).aupdate(status="blocked", topic_id=None)
+    Xodim.objects.filter(user_id=user_id).update(status="blocked", topic_id=None)
 
 
-async def unblock_xodim(user_id: int):
+@sync_to_async(thread_sensitive=False)
+def unblock_xodim(user_id: int):
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).aupdate(status="approved")
+    Xodim.objects.filter(user_id=user_id).update(status="approved")
 
 
-async def reset_topic(user_id: int):
+@sync_to_async(thread_sensitive=False)
+def reset_topic(user_id: int):
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).aupdate(status="pending", topic_id=None)
+    Xodim.objects.filter(user_id=user_id).update(status="pending", topic_id=None)
 
 
-async def delete_xodim(user_id: int):
+@sync_to_async(thread_sensitive=False)
+def delete_xodim(user_id: int):
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).adelete()
+    Xodim.objects.filter(user_id=user_id).delete()
 
 
-async def update_xodim_field(user_id: int, field: str, value: str):
+@sync_to_async(thread_sensitive=False)
+def update_xodim_field(user_id: int, field: str, value: str):
     allowed = {"ism", "lavozim", "kod", "filial"}
     if field not in allowed:
         raise ValueError(f"Ruxsat etilmagan maydon: {field}")
     (Xodim, *_) = _models()
-    await Xodim.objects.filter(user_id=user_id).aupdate(**{field: value})
+    Xodim.objects.filter(user_id=user_id).update(**{field: value})
 
 
 # ── Biriktirish ───────────────────────────────────────────────────────────────
-async def get_biriktirish(agent_id: int) -> int | None:
+def _sync_get_biriktirish(agent_id: int) -> int | None:
     (_, _, _, _, _, _, _, Biriktirish, *_) = _models()
     try:
-        b = await Biriktirish.objects.aget(agent_id=agent_id)
+        b = Biriktirish.objects.get(agent_id=agent_id)
         return b.checker_id
     except Biriktirish.DoesNotExist:
         return None
 
 
-async def set_biriktirish(agent_id: int, checker_id: int):
+@sync_to_async(thread_sensitive=False)
+def get_biriktirish(agent_id: int) -> int | None:
+    return _sync_get_biriktirish(agent_id)
+
+
+@sync_to_async(thread_sensitive=False)
+def set_biriktirish(agent_id: int, checker_id: int):
     (_, _, _, _, _, _, _, Biriktirish, *_) = _models()
-    await Biriktirish.objects.aupdate_or_create(
+    Biriktirish.objects.update_or_create(
         agent_id=agent_id,
         defaults={"checker_id": checker_id},
     )
 
 
-async def delete_biriktirish(agent_id: int):
+@sync_to_async(thread_sensitive=False)
+def delete_biriktirish(agent_id: int):
     (_, _, _, _, _, _, _, Biriktirish, *_) = _models()
-    await Biriktirish.objects.filter(agent_id=agent_id).adelete()
+    Biriktirish.objects.filter(agent_id=agent_id).delete()
 
 
-async def get_all_biriktirish() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_all_biriktirish() -> list:
     """Returns [(agent_id, agent_ism, checker_id, checker_ism)]"""
-    return await _raw_all("""
+    return _sync_raw_all("""
         SELECT b.agent_id, a.ism, b.checker_id, c.ism
         FROM biriktirish b
         LEFT JOIN xodimlar a ON a.user_id = b.agent_id
@@ -209,71 +270,80 @@ async def get_all_biriktirish() -> list:
     """)
 
 
-async def get_agents() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_agents() -> list:
     (Xodim, *_) = _models()
-    return [row async for row in Xodim.objects.filter(
+    return list(Xodim.objects.filter(
         lavozim="Agent", status="approved"
-    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status")]
+    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status"))
 
 
-async def get_available_checkers() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_available_checkers() -> list:
     (Xodim, *_) = _models()
-    return [row async for row in Xodim.objects.filter(
+    return list(Xodim.objects.filter(
         lavozim__in=["Supervisor", "Filial Rahbari", "Distribyutor"],
         status="approved",
-    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status")]
+    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status"))
 
 
-async def get_distributors() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_distributors() -> list:
     (Xodim, *_) = _models()
-    return [row async for row in Xodim.objects.filter(
+    return list(Xodim.objects.filter(
         lavozim="Distribyutor", status="approved"
-    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status")]
+    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status"))
 
 
-async def get_xodim_full(user_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_xodim_full(user_id: int) -> tuple | None:
     """Returns (user_id, ism, lavozim, kod, filial, tel1, tel2, tug_kun, topic_id, status, sana)"""
     (Xodim, *_) = _models()
     try:
-        x = await Xodim.objects.aget(user_id=user_id)
+        x = Xodim.objects.get(user_id=user_id)
         return (x.user_id, x.ism, x.lavozim, x.kod, x.filial,
                 x.telefon1, x.telefon2, x.tugilgan_kun, x.topic_id, x.status, x.sana)
     except Xodim.DoesNotExist:
         return None
 
 
-async def search_xodimlar(query: str) -> list:
+@sync_to_async(thread_sensitive=False)
+def search_xodimlar(query: str) -> list:
     (Xodim, *_) = _models()
     if query.isdigit():
-        return [row async for row in Xodim.objects.filter(
+        return list(Xodim.objects.filter(
             user_id=int(query)
-        ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status")]
-    return [row async for row in Xodim.objects.filter(
+        ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status"))
+    return list(Xodim.objects.filter(
         ism__icontains=query
-    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status")]
+    ).values_list("ism", "lavozim", "filial", "kod", "user_id", "status"))
 
 
-async def get_approved_xodimlar() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_approved_xodimlar() -> list:
     (Xodim, *_) = _models()
-    return [row async for row in Xodim.objects.filter(
+    return list(Xodim.objects.filter(
         status="approved"
-    ).values_list("ism", "lavozim", "filial", "kod", "user_id")]
+    ).values_list("ism", "lavozim", "filial", "kod", "user_id"))
 
 
-async def get_pending_xodimlar() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_pending_xodimlar() -> list:
     (Xodim, *_) = _models()
-    return [row async for row in Xodim.objects.filter(
+    return list(Xodim.objects.filter(
         status="pending"
-    ).values_list("user_id", "ism", "lavozim", "kod", "filial")]
+    ).values_list("user_id", "ism", "lavozim", "kod", "filial"))
 
 
-async def get_pending_sorovlar_count() -> int:
+@sync_to_async(thread_sensitive=False)
+def get_pending_sorovlar_count() -> int:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    return await Sorov.objects.filter(status="pending_supervisor").acount()
+    return Sorov.objects.filter(status="pending_supervisor").count()
 
 
-async def get_pending_sorovlar_by_supervisor() -> dict[int, int]:
-    return dict(await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_pending_sorovlar_by_supervisor() -> dict[int, int]:
+    return dict(_sync_raw_all("""
         SELECT supervisor_id, COUNT(*) FROM sorovlar
         WHERE status='pending_supervisor' AND supervisor_id IS NOT NULL
         AND supervisor_id NOT IN (SELECT user_id FROM admins)
@@ -281,8 +351,9 @@ async def get_pending_sorovlar_by_supervisor() -> dict[int, int]:
     """))
 
 
-async def get_pending_sorovlar_for_push() -> list[tuple]:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_pending_sorovlar_for_push() -> list[tuple]:
+    return _sync_raw_all("""
         SELECT supervisor_id, id, sup_msg_id FROM sorovlar
         WHERE status='pending_supervisor' AND supervisor_id IS NOT NULL
         AND supervisor_id NOT IN (SELECT user_id FROM admins)
@@ -290,34 +361,38 @@ async def get_pending_sorovlar_for_push() -> list[tuple]:
     """)
 
 
-async def get_blocked_xodimlar() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_blocked_xodimlar() -> list:
     (Xodim, *_) = _models()
-    return [row async for row in Xodim.objects.filter(
+    return list(Xodim.objects.filter(
         status="blocked"
-    ).values_list("user_id", "ism", "lavozim", "filial", "kod")]
+    ).values_list("user_id", "ism", "lavozim", "filial", "kod"))
 
 
-async def get_all_xodimlar_for_excel() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_all_xodimlar_for_excel() -> list:
     (Xodim, *_) = _models()
-    return [row async for row in Xodim.objects.all().values_list(
+    return list(Xodim.objects.all().values_list(
         "user_id", "ism", "lavozim", "kod", "filial",
         "telefon1", "telefon2", "tugilgan_kun", "status", "sana"
-    )]
+    ))
 
 
 # ── Xabar guruhi ──────────────────────────────────────────────────────────────
-async def create_xabar_guruhi(user_id: int, ism: str, filial: str, topic_id: int) -> int:
+@sync_to_async(thread_sensitive=False)
+def create_xabar_guruhi(user_id: int, ism: str, filial: str, topic_id: int) -> int:
     (_, _, XabarGuruhi, *_) = _models()
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    g = await XabarGuruhi.objects.acreate(
+    g = XabarGuruhi.objects.create(
         user_id=user_id, ism=ism, filial=filial, topic_id=topic_id,
         holat="kutilmoqda", vaqt=vaqt,
     )
     return g.pk
 
 
-async def get_active_group(user_id: int) -> tuple | None:
-    return await _raw_one(f"""
+@sync_to_async(thread_sensitive=False)
+def get_active_group(user_id: int) -> tuple | None:
+    return _sync_raw_one(f"""
         SELECT g.id, g.topic_id
         FROM xabar_guruhi g
         WHERE g.user_id = %s AND g.holat = 'kutilmoqda'
@@ -328,28 +403,31 @@ async def get_active_group(user_id: int) -> tuple | None:
     """, [user_id])
 
 
-async def get_group_info(group_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_group_info(group_id: int) -> tuple | None:
     (_, _, XabarGuruhi, *_) = _models()
     try:
-        g = await XabarGuruhi.objects.aget(pk=group_id)
+        g = XabarGuruhi.objects.get(pk=group_id)
         return (g.user_id, g.ism, g.filial, g.topic_id, g.holat)
     except XabarGuruhi.DoesNotExist:
         return None
 
 
-async def update_group_holat(group_id: int, holat: str):
+@sync_to_async(thread_sensitive=False)
+def update_group_holat(group_id: int, holat: str):
     (_, Xabar, XabarGuruhi, *_) = _models()
     if holat == "bajarildi":
         javob_vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        await XabarGuruhi.objects.filter(pk=group_id).aupdate(holat=holat, javob_vaqt=javob_vaqt)
-        await Xabar.objects.filter(group_id=group_id).aupdate(holat=holat, javob_vaqt=javob_vaqt)
+        XabarGuruhi.objects.filter(pk=group_id).update(holat=holat, javob_vaqt=javob_vaqt)
+        Xabar.objects.filter(group_id=group_id).update(holat=holat, javob_vaqt=javob_vaqt)
     else:
-        await XabarGuruhi.objects.filter(pk=group_id).aupdate(holat=holat)
-        await Xabar.objects.filter(group_id=group_id).aupdate(holat=holat)
+        XabarGuruhi.objects.filter(pk=group_id).update(holat=holat)
+        Xabar.objects.filter(group_id=group_id).update(holat=holat)
 
 
-async def get_most_important_msg(group_id: int) -> tuple | None:
-    return await _raw_one("""
+@sync_to_async(thread_sensitive=False)
+def get_most_important_msg(group_id: int) -> tuple | None:
+    return _sync_raw_one("""
         SELECT id, xabar_turi, msg_id,
                CASE xabar_turi
                    WHEN '📷 Rasm'         THEN 1
@@ -366,23 +444,26 @@ async def get_most_important_msg(group_id: int) -> tuple | None:
     """, [group_id])
 
 
-async def count_group_msgs(group_id: int) -> int:
+@sync_to_async(thread_sensitive=False)
+def count_group_msgs(group_id: int) -> int:
     (_, Xabar, *_) = _models()
-    return await Xabar.objects.filter(group_id=group_id).acount()
+    return Xabar.objects.filter(group_id=group_id).count()
 
 
-async def get_group_msgs_list(group_id: int) -> list:
+@sync_to_async(thread_sensitive=False)
+def get_group_msgs_list(group_id: int) -> list:
     (_, Xabar, *_) = _models()
-    return [row async for row in Xabar.objects.filter(
+    return list(Xabar.objects.filter(
         group_id=group_id
-    ).order_by("id").values_list("xabar_turi", "vaqt")]
+    ).order_by("id").values_list("xabar_turi", "vaqt"))
 
 
 # ── Xabar ─────────────────────────────────────────────────────────────────────
-async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id, group_id=None) -> int:
+@sync_to_async(thread_sensitive=False)
+def insert_xabar(user_id, ism, filial, xabar_turi, msg_id, group_id=None) -> int:
     (_, Xabar, *_) = _models()
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    x = await Xabar.objects.acreate(
+    x = Xabar.objects.create(
         user_id=user_id, xodim_name=ism, filial=filial,
         xabar_turi=xabar_turi, vaqt=vaqt, holat="kutilmoqda",
         msg_id=msg_id, group_id=group_id,
@@ -390,78 +471,84 @@ async def insert_xabar(user_id, ism, filial, xabar_turi, msg_id, group_id=None) 
     return x.pk
 
 
-async def update_xabar_group_fwd_id(task_id: int, group_fwd_id: int):
+@sync_to_async(thread_sensitive=False)
+def update_xabar_group_fwd_id(task_id: int, group_fwd_id: int):
     (_, Xabar, *_) = _models()
-    await Xabar.objects.filter(pk=task_id).aupdate(group_fwd_id=group_fwd_id)
+    Xabar.objects.filter(pk=task_id).update(group_fwd_id=group_fwd_id)
 
 
-async def get_xabar_by_group_fwd_id(group_fwd_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_xabar_by_group_fwd_id(group_fwd_id: int) -> tuple | None:
     (_, Xabar, *_) = _models()
-    x = await Xabar.objects.filter(group_fwd_id=group_fwd_id).values_list(
+    return Xabar.objects.filter(group_fwd_id=group_fwd_id).values_list(
         "user_id", "msg_id"
-    ).afirst()
-    return x
+    ).first()
 
 
-async def insert_admin_msg_map(user_id: int, group_msg_id: int, private_msg_id: int):
+@sync_to_async(thread_sensitive=False)
+def insert_admin_msg_map(user_id: int, group_msg_id: int, private_msg_id: int):
     (_, _, _, _, _, _, _, _, AdminMsgMap, *_) = _models()
-    await AdminMsgMap.objects.acreate(
+    AdminMsgMap.objects.create(
         user_id=user_id, group_msg_id=group_msg_id, private_msg_id=private_msg_id,
     )
 
 
-async def get_group_msg_id_by_private(user_id: int, private_msg_id: int) -> int | None:
+@sync_to_async(thread_sensitive=False)
+def get_group_msg_id_by_private(user_id: int, private_msg_id: int) -> int | None:
     (_, _, _, _, _, _, _, _, AdminMsgMap, *_) = _models()
-    row = await AdminMsgMap.objects.filter(
+    return AdminMsgMap.objects.filter(
         user_id=user_id, private_msg_id=private_msg_id
-    ).values_list("group_msg_id", flat=True).afirst()
-    return row
+    ).values_list("group_msg_id", flat=True).first()
 
 
-async def get_private_msg_id_by_group(user_id: int, group_msg_id: int) -> int | None:
+@sync_to_async(thread_sensitive=False)
+def get_private_msg_id_by_group(user_id: int, group_msg_id: int) -> int | None:
     (_, _, _, _, _, _, _, _, AdminMsgMap, *_) = _models()
-    row = await AdminMsgMap.objects.filter(
+    return AdminMsgMap.objects.filter(
         user_id=user_id, group_msg_id=group_msg_id
-    ).values_list("private_msg_id", flat=True).afirst()
-    return row
+    ).values_list("private_msg_id", flat=True).first()
 
 
-async def get_xodim_by_topic(topic_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_xodim_by_topic(topic_id: int) -> tuple | None:
     (Xodim, *_) = _models()
-    x = await Xodim.objects.filter(
+    return Xodim.objects.filter(
         topic_id=topic_id, status="approved"
-    ).values_list("user_id", "ism").afirst()
-    return x
+    ).values_list("user_id", "ism").first()
 
 
-async def get_xabar(task_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_xabar(task_id: int) -> tuple | None:
     """Returns (user_id, xodim_name, msg_id, holat)"""
     (_, Xabar, *_) = _models()
     try:
-        x = await Xabar.objects.aget(pk=task_id)
+        x = Xabar.objects.get(pk=task_id)
         return (x.user_id, x.xodim_name, x.msg_id, x.holat)
     except Xabar.DoesNotExist:
         return None
 
 
-async def update_xabar_holat(task_id: int, holat: str):
+@sync_to_async(thread_sensitive=False)
+def update_xabar_holat(task_id: int, holat: str):
     (_, Xabar, *_) = _models()
     if holat == "bajarildi":
         javob_vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        await Xabar.objects.filter(pk=task_id).aupdate(holat=holat, javob_vaqt=javob_vaqt)
+        Xabar.objects.filter(pk=task_id).update(holat=holat, javob_vaqt=javob_vaqt)
     else:
-        await Xabar.objects.filter(pk=task_id).aupdate(holat=holat)
+        Xabar.objects.filter(pk=task_id).update(holat=holat)
 
 
-async def get_all_xabarlar_for_excel() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_all_xabarlar_for_excel() -> list:
     (_, Xabar, *_) = _models()
-    return [row async for row in Xabar.objects.all().values_list(
+    return list(Xabar.objects.all().values_list(
         "id", "user_id", "xodim_name", "filial", "xabar_turi", "vaqt", "holat", "javob_vaqt"
-    )]
+    ))
 
 
-async def get_kunlik_statistika() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_kunlik_statistika() -> list:
+    return _sync_raw_all("""
         SELECT ism, filial,
                COUNT(*) AS jami,
                SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) AS bajarildi
@@ -472,14 +559,15 @@ async def get_kunlik_statistika() -> list:
     """)
 
 
-async def get_statistika() -> dict:
-    g = await _raw_one(
+@sync_to_async(thread_sensitive=False)
+def get_statistika() -> dict:
+    g = _sync_raw_one(
         "SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) FROM xabar_guruhi"
     )
-    m = await _raw_one(
+    m = _sync_raw_one(
         "SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END) FROM xabarlar WHERE group_id IS NULL"
     )
-    times = await _raw_all("""
+    times = _sync_raw_all("""
         SELECT vaqt, javob_vaqt FROM xabar_guruhi WHERE holat='bajarildi'
         UNION ALL
         SELECT vaqt, javob_vaqt FROM xabarlar WHERE holat='bajarildi' AND group_id IS NULL
@@ -507,107 +595,119 @@ async def get_statistika() -> dict:
 
 
 # ── FAQ ───────────────────────────────────────────────────────────────────────
-async def get_faq_kategoriyalar() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_faq_kategoriyalar() -> list:
     (_, _, _, FaqKategoriya, *_) = _models()
-    return [row async for row in FaqKategoriya.objects.order_by(
+    return list(FaqKategoriya.objects.order_by(
         "tartib", "id"
-    ).values_list("id", "emoji", "nomi")]
+    ).values_list("id", "emoji", "nomi"))
 
 
-async def get_faq_savollar(kategoriya_id: int) -> list:
+@sync_to_async(thread_sensitive=False)
+def get_faq_savollar(kategoriya_id: int) -> list:
     (_, _, _, _, Faq, *_) = _models()
-    return [row async for row in Faq.objects.filter(
+    return list(Faq.objects.filter(
         kategoriya_id=kategoriya_id
-    ).order_by("tartib", "id").values_list("id", "savol")]
+    ).order_by("tartib", "id").values_list("id", "savol"))
 
 
-async def get_faq_item(faq_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_faq_item(faq_id: int) -> tuple | None:
     (_, _, _, _, Faq, *_) = _models()
     try:
-        f = await Faq.objects.aget(pk=faq_id)
+        f = Faq.objects.get(pk=faq_id)
         return (f.savol, f.javob, f.kategoriya_id)
     except Faq.DoesNotExist:
         return None
 
 
-async def add_faq_kategoriya(emoji: str, nomi: str) -> int:
+@sync_to_async(thread_sensitive=False)
+def add_faq_kategoriya(emoji: str, nomi: str) -> int:
     (_, _, _, FaqKategoriya, *_) = _models()
-    k = await FaqKategoriya.objects.acreate(emoji=emoji, nomi=nomi)
+    k = FaqKategoriya.objects.create(emoji=emoji, nomi=nomi)
     return k.pk
 
 
-async def add_faq(kategoriya_id: int, savol: str, javob: str) -> int:
+@sync_to_async(thread_sensitive=False)
+def add_faq(kategoriya_id: int, savol: str, javob: str) -> int:
     (_, _, _, _, Faq, *_) = _models()
-    f = await Faq.objects.acreate(kategoriya_id=kategoriya_id, savol=savol, javob=javob)
+    f = Faq.objects.create(kategoriya_id=kategoriya_id, savol=savol, javob=javob)
     return f.pk
 
 
-async def delete_faq(faq_id: int):
+@sync_to_async(thread_sensitive=False)
+def delete_faq(faq_id: int):
     (_, _, _, _, Faq, *_) = _models()
-    await Faq.objects.filter(pk=faq_id).adelete()
+    Faq.objects.filter(pk=faq_id).delete()
 
 
-async def delete_faq_kategoriya(kategoriya_id: int):
+@sync_to_async(thread_sensitive=False)
+def delete_faq_kategoriya(kategoriya_id: int):
     (_, _, _, FaqKategoriya, Faq, *_) = _models()
-    await Faq.objects.filter(kategoriya_id=kategoriya_id).adelete()
-    await FaqKategoriya.objects.filter(pk=kategoriya_id).adelete()
+    Faq.objects.filter(kategoriya_id=kategoriya_id).delete()
+    FaqKategoriya.objects.filter(pk=kategoriya_id).delete()
 
 
 # ── Bot menyular ──────────────────────────────────────────────────────────────
-async def get_all_active_tugmalar() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_all_active_tugmalar() -> list:
     """Barcha faol BotTugma yozuvlarini qaytaradi (rol bilan birga)."""
     from bot_app.models import BotTugma
-    return [
-        t async for t in
+    return list(
         BotTugma.objects.select_related("rol").filter(faol=True, rol__faol=True).order_by("rol__lavozim", "qator", "ustun")
-    ]
+    )
 
 
-async def get_tugma_by_matn(matn: str) -> object | None:
+@sync_to_async(thread_sensitive=False)
+def get_tugma_by_matn(matn: str) -> object | None:
     """Matn bo'yicha faol BotTugma ni qaytaradi."""
     from bot_app.models import BotTugma
     try:
-        return await BotTugma.objects.select_related("rol").aget(matn=matn, faol=True, rol__faol=True)
+        return BotTugma.objects.select_related("rol").get(matn=matn, faol=True, rol__faol=True)
     except BotTugma.DoesNotExist:
         return None
 
 
-async def get_all_slash_buyruqlar() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_all_slash_buyruqlar() -> list:
     """Barcha faol BotSlashBuyruq larni qaytaradi."""
     from bot_app.models import BotSlashBuyruq
-    return [b async for b in BotSlashBuyruq.objects.filter(faol=True).order_by("tartib", "buyruq")]
+    return list(BotSlashBuyruq.objects.filter(faol=True).order_by("tartib", "buyruq"))
 
 
 # ── Urgency ───────────────────────────────────────────────────────────────────
-async def set_urgency(group_id: int, urgency: str):
+@sync_to_async(thread_sensitive=False)
+def set_urgency(group_id: int, urgency: str):
     (_, _, XabarGuruhi, *_) = _models()
-    await XabarGuruhi.objects.filter(pk=group_id).aupdate(urgency=urgency)
+    XabarGuruhi.objects.filter(pk=group_id).update(urgency=urgency)
 
 
-async def get_group_urgency(group_id: int) -> str | None:
+@sync_to_async(thread_sensitive=False)
+def get_group_urgency(group_id: int) -> str | None:
     (_, _, XabarGuruhi, *_) = _models()
-    row = await XabarGuruhi.objects.filter(pk=group_id).values_list(
+    return XabarGuruhi.objects.filter(pk=group_id).values_list(
         "urgency", flat=True
-    ).afirst()
-    return row
+    ).first()
 
 
 # ── Baholash ──────────────────────────────────────────────────────────────────
-async def add_baholash(group_id: int, checker_id: int, agent_id: int, yulduz: int):
+@sync_to_async(thread_sensitive=False)
+def add_baholash(group_id: int, checker_id: int, agent_id: int, yulduz: int):
     (_, _, _, _, _, Baholash, *_) = _models()
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    await Baholash.objects.aupdate_or_create(
+    Baholash.objects.update_or_create(
         group_id=group_id,
         defaults={"checker_id": checker_id, "agent_id": agent_id, "yulduz": yulduz, "vaqt": vaqt},
     )
 
 
-async def get_agent_rating_summary(agent_id: int) -> dict:
-    row = await _raw_one(
+@sync_to_async(thread_sensitive=False)
+def get_agent_rating_summary(agent_id: int) -> dict:
+    row = _sync_raw_one(
         "SELECT ROUND(AVG(yulduz),1), COUNT(*) FROM baholash WHERE agent_id=%s",
         [agent_id],
     )
-    haftalik_row = await _raw_one(
+    haftalik_row = _sync_raw_one(
         "SELECT ROUND(AVG(yulduz),1) FROM baholash WHERE agent_id=%s AND date(vaqt)>=date('now','-7 days','localtime')",
         [agent_id],
     )
@@ -616,8 +716,9 @@ async def get_agent_rating_summary(agent_id: int) -> dict:
     return {"avg": avg, "total": total, "haftalik": haftalik}
 
 
-async def get_agent_leaderboard() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_agent_leaderboard() -> list:
+    return _sync_raw_all("""
         SELECT x.user_id, x.ism, x.filial,
                ROUND(AVG(b.yulduz),1) as avg_r,
                COUNT(b.id) as total,
@@ -631,26 +732,28 @@ async def get_agent_leaderboard() -> list:
 
 
 # ── Checker faollik ────────────────────────────────────────────────────────────
-async def update_checker_faollik(checker_id: int):
+@sync_to_async(thread_sensitive=False)
+def update_checker_faollik(checker_id: int):
     (_, _, _, _, _, _, CheckerFaollik, *_) = _models()
     vaqt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    await CheckerFaollik.objects.aupdate_or_create(
+    CheckerFaollik.objects.update_or_create(
         checker_id=checker_id,
         defaults={"last_active": vaqt},
     )
 
 
-async def get_checker_faollik(checker_id: int) -> str | None:
+@sync_to_async(thread_sensitive=False)
+def get_checker_faollik(checker_id: int) -> str | None:
     (_, _, _, _, _, _, CheckerFaollik, *_) = _models()
-    row = await CheckerFaollik.objects.filter(
+    return CheckerFaollik.objects.filter(
         checker_id=checker_id
-    ).values_list("last_active", flat=True).afirst()
-    return row
+    ).values_list("last_active", flat=True).first()
 
 
 # ── Haftalik hisobot ──────────────────────────────────────────────────────────
-async def get_checker_weekly_stats() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_checker_weekly_stats() -> list:
+    return _sync_raw_all("""
         SELECT c.ism,
                COUNT(DISTINCT bir.agent_id) as agents,
                COUNT(DISTINCT g.id) as topshiriq,
@@ -667,8 +770,9 @@ async def get_checker_weekly_stats() -> list:
     """)
 
 
-async def get_agents_without_messages_today() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_agents_without_messages_today() -> list:
+    return _sync_raw_all("""
         SELECT x.user_id, x.ism FROM xodimlar x
         WHERE x.lavozim='Agent' AND x.status='approved'
         AND x.user_id NOT IN (
@@ -679,7 +783,8 @@ async def get_agents_without_messages_today() -> list:
 
 
 # ── Filial statistikasi ────────────────────────────────────────────────────────
-async def get_filial_stats(period: str = "haftalik") -> list:
+@sync_to_async(thread_sensitive=False)
+def get_filial_stats(period: str = "haftalik") -> list:
     period_filter = {
         "haftalik": "date('now','-7 days','localtime')",
         "oylik":    "date('now','-30 days','localtime')",
@@ -687,7 +792,7 @@ async def get_filial_stats(period: str = "haftalik") -> list:
         "hammasi":  "date('2000-01-01')",
     }.get(period, "date('now','-7 days','localtime')")
 
-    return await _raw_all(f"""
+    return _sync_raw_all(f"""
         SELECT
             x.filial,
             COUNT(DISTINCT x.user_id)                                          as agent_soni,
@@ -709,8 +814,9 @@ async def get_filial_stats(period: str = "haftalik") -> list:
     """)
 
 
-async def get_agent_today_stats(agent_id: int) -> dict:
-    row = await _raw_one("""
+@sync_to_async(thread_sensitive=False)
+def get_agent_today_stats(agent_id: int) -> dict:
+    row = _sync_raw_one("""
         SELECT COUNT(*), SUM(CASE WHEN holat='bajarildi' THEN 1 ELSE 0 END)
         FROM xabar_guruhi
         WHERE user_id=%s AND date(vaqt)=date('now','localtime')
@@ -718,8 +824,9 @@ async def get_agent_today_stats(agent_id: int) -> dict:
     return {"bugun": row[0] or 0, "bajarildi": row[1] or 0}
 
 
-async def get_unassigned_agents() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_unassigned_agents() -> list:
+    return _sync_raw_all("""
         SELECT x.ism, x.user_id, x.filial, x.kod
         FROM xodimlar x
         WHERE x.lavozim='Agent' AND x.status='approved'
@@ -727,16 +834,17 @@ async def get_unassigned_agents() -> list:
     """)
 
 
-async def get_latest_group_fwd_id(group_id: int) -> int | None:
+@sync_to_async(thread_sensitive=False)
+def get_latest_group_fwd_id(group_id: int) -> int | None:
     (_, Xabar, *_) = _models()
-    row = await Xabar.objects.filter(
+    return Xabar.objects.filter(
         group_id=group_id, group_fwd_id__isnull=False
-    ).order_by("-id").values_list("group_fwd_id", flat=True).afirst()
-    return row
+    ).order_by("-id").values_list("group_fwd_id", flat=True).first()
 
 
-async def get_all_biriktirish_detailed() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_all_biriktirish_detailed() -> list:
+    return _sync_raw_all("""
         SELECT b.agent_id, a.ism, b.checker_id, c.ism, a.filial, a.status
         FROM biriktirish b
         JOIN xodimlar a ON a.user_id = b.agent_id
@@ -746,13 +854,14 @@ async def get_all_biriktirish_detailed() -> list:
 
 
 # ── Klientlar ─────────────────────────────────────────────────────────────────
-async def insert_klient(rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
-                        lokatsiya_lat, lokatsiya_lon, lokatsiya_address, kategoriya, dokon_turi,
-                        distributor, agent_kod, vizit_kun, chastota, limit_summa, brendlar,
-                        supervisor_id) -> int:
+@sync_to_async(thread_sensitive=False)
+def insert_klient(rasm_file_id, firma_nomi, telefon1, telefon2, inn, orienter,
+                  lokatsiya_lat, lokatsiya_lon, lokatsiya_address, kategoriya, dokon_turi,
+                  distributor, agent_kod, vizit_kun, chastota, limit_summa, brendlar,
+                  supervisor_id) -> int:
     (_, _, _, _, _, _, _, _, _, Klient, *_) = _models()
     sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    k = await Klient.objects.acreate(
+    k = Klient.objects.create(
         rasm_file_id=rasm_file_id, firma_nomi=firma_nomi, telefon1=telefon1,
         telefon2=telefon2, inn=inn, orienter=orienter,
         lokatsiya_lat=lokatsiya_lat, lokatsiya_lon=lokatsiya_lon,
@@ -764,38 +873,44 @@ async def insert_klient(rasm_file_id, firma_nomi, telefon1, telefon2, inn, orien
     return k.pk
 
 
-async def get_klient(klient_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_klient(klient_id: int) -> tuple | None:
     (_, _, _, _, _, _, _, _, _, Klient, *_) = _models()
     try:
-        return (await Klient.objects.aget(pk=klient_id)).as_tuple()
+        return Klient.objects.get(pk=klient_id).as_tuple()
     except Klient.DoesNotExist:
         return None
 
 
-async def get_klientlar_by_supervisor(supervisor_id: int) -> list:
+@sync_to_async(thread_sensitive=False)
+def get_klientlar_by_supervisor(supervisor_id: int) -> list:
     (_, _, _, _, _, _, _, _, _, Klient, *_) = _models()
-    return [k.as_tuple() async for k in Klient.objects.filter(
+    return [k.as_tuple() for k in Klient.objects.filter(
         supervisor_id=supervisor_id
     ).order_by("-sana")]
 
 
-async def get_all_klientlar(status: str | None = None) -> list:
+@sync_to_async(thread_sensitive=False)
+def get_all_klientlar(status: str | None = None) -> list:
     (_, _, _, _, _, _, _, _, _, Klient, *_) = _models()
     qs = Klient.objects.filter(status=status) if status else Klient.objects.all()
-    return [k.as_tuple() async for k in qs.order_by("-sana")]
+    return [k.as_tuple() for k in qs.order_by("-sana")]
 
 
-async def approve_klient(klient_id: int):
+@sync_to_async(thread_sensitive=False)
+def approve_klient(klient_id: int):
     (_, _, _, _, _, _, _, _, _, Klient, *_) = _models()
-    await Klient.objects.filter(pk=klient_id).aupdate(status="approved")
+    Klient.objects.filter(pk=klient_id).update(status="approved")
 
 
-async def reject_klient(klient_id: int, reason: str):
+@sync_to_async(thread_sensitive=False)
+def reject_klient(klient_id: int, reason: str):
     (_, _, _, _, _, _, _, _, _, Klient, *_) = _models()
-    await Klient.objects.filter(pk=klient_id).aupdate(status="rejected", reject_reason=reason)
+    Klient.objects.filter(pk=klient_id).update(status="rejected", reject_reason=reason)
 
 
-async def search_klientlar(query: str) -> list:
+@sync_to_async(thread_sensitive=False)
+def search_klientlar(query: str) -> list:
     digits = "".join(filter(str.isdigit, query))
     if len(digits) == 12 and digits.startswith("998"):
         phone_q = digits[3:]
@@ -806,7 +921,7 @@ async def search_klientlar(query: str) -> list:
     else:
         phone_q = digits
 
-    rows = await _raw_all("""
+    return _sync_raw_all("""
         SELECT * FROM klientlar
         WHERE firma_nomi LIKE %s
            OR inn LIKE %s
@@ -816,16 +931,17 @@ async def search_klientlar(query: str) -> list:
         ORDER BY sana DESC
     """, [f"%{query}%", f"%{query}%", f"%{query}%",
           f"%{phone_q}%", f"%{phone_q}%"])
-    return rows
 
 
-async def get_all_klientlar_for_excel() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_all_klientlar_for_excel() -> list:
     (_, _, _, _, _, _, _, _, _, Klient, *_) = _models()
-    return [k.as_tuple() async for k in Klient.objects.filter(status="approved").order_by("firma_nomi")]
+    return [k.as_tuple() for k in Klient.objects.filter(status="approved").order_by("firma_nomi")]
 
 
-async def get_klientlar_stats() -> dict:
-    rows = await _raw_all(
+@sync_to_async(thread_sensitive=False)
+def get_klientlar_stats() -> dict:
+    rows = _sync_raw_all(
         "SELECT status, COUNT(*) FROM klientlar GROUP BY status"
     )
     stats = {"pending": 0, "approved": 0, "rejected": 0}
@@ -836,8 +952,9 @@ async def get_klientlar_stats() -> dict:
     return stats
 
 
-async def get_opened_klientlar_for_excel() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_opened_klientlar_for_excel() -> list:
+    return _sync_raw_all("""
         SELECT id, firma_nomi, telefon1, telefon2, inn, orienter,
                lokatsiya_lat, lokatsiya_lon, lokatsiya_address,
                kategoriya, dokon_turi, distributor, agent_kod,
@@ -848,8 +965,9 @@ async def get_opened_klientlar_for_excel() -> list:
     """)
 
 
-async def check_duplicate_firma(firma_nomi: str) -> dict | None:
-    row = await _raw_one(
+@sync_to_async(thread_sensitive=False)
+def check_duplicate_firma(firma_nomi: str) -> dict | None:
+    row = _sync_raw_one(
         "SELECT * FROM klientlar WHERE LOWER(firma_nomi) = LOWER(%s) LIMIT 1",
         [firma_nomi],
     )
@@ -862,8 +980,9 @@ async def check_duplicate_firma(firma_nomi: str) -> dict | None:
     return None
 
 
-async def check_duplicate_telefon(telefon: str) -> dict | None:
-    row = await _raw_one(
+@sync_to_async(thread_sensitive=False)
+def check_duplicate_telefon(telefon: str) -> dict | None:
+    row = _sync_raw_one(
         "SELECT * FROM klientlar WHERE telefon1 = %s OR telefon2 = %s LIMIT 1",
         [telefon, telefon],
     )
@@ -877,14 +996,15 @@ async def check_duplicate_telefon(telefon: str) -> dict | None:
 
 
 # ── Sorovlar ──────────────────────────────────────────────────────────────────
-async def insert_sorov(agent_id: int, agent_ism: str, tur: str,
-                       dokon_nomi: str | None, yangi_qiymat: str | None,
-                       lat: float | None, lon: float | None,
-                       foto_ids: str | None, izoh: str | None,
-                       supervisor_id: int | None) -> int:
+@sync_to_async(thread_sensitive=False)
+def insert_sorov(agent_id: int, agent_ism: str, tur: str,
+                 dokon_nomi: str | None, yangi_qiymat: str | None,
+                 lat: float | None, lon: float | None,
+                 foto_ids: str | None, izoh: str | None,
+                 supervisor_id: int | None) -> int:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
     sana = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    s = await Sorov.objects.acreate(
+    s = Sorov.objects.create(
         agent_id=agent_id, agent_ism=agent_ism, tur=tur,
         dokon_nomi=dokon_nomi, yangi_qiymat=yangi_qiymat,
         lat=lat, lon=lon, foto_ids=foto_ids, izoh=izoh,
@@ -894,87 +1014,103 @@ async def insert_sorov(agent_id: int, agent_ism: str, tur: str,
     return s.pk
 
 
-async def get_sorov(sorov_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_sorov(sorov_id: int) -> tuple | None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
     try:
-        return (await Sorov.objects.aget(pk=sorov_id)).as_tuple()
+        return Sorov.objects.get(pk=sorov_id).as_tuple()
     except Sorov.DoesNotExist:
         return None
 
 
-async def update_sorov_status(sorov_id: int, status: str) -> None:
+@sync_to_async(thread_sensitive=False)
+def update_sorov_status(sorov_id: int, status: str) -> None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    await Sorov.objects.filter(pk=sorov_id).aupdate(status=status)
+    Sorov.objects.filter(pk=sorov_id).update(status=status)
 
 
-async def update_sorov_agent_msg_id(sorov_id: int, msg_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def update_sorov_agent_msg_id(sorov_id: int, msg_id: int) -> None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    await Sorov.objects.filter(pk=sorov_id).aupdate(agent_msg_id=msg_id)
+    Sorov.objects.filter(pk=sorov_id).update(agent_msg_id=msg_id)
 
 
-async def update_sorov_sup_msg_id(sorov_id: int, msg_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def update_sorov_sup_msg_id(sorov_id: int, msg_id: int) -> None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    await Sorov.objects.filter(pk=sorov_id).aupdate(sup_msg_id=msg_id)
+    Sorov.objects.filter(pk=sorov_id).update(sup_msg_id=msg_id)
 
 
-async def update_sorov_admin_msg_id(sorov_id: int, msg_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def update_sorov_admin_msg_id(sorov_id: int, msg_id: int) -> None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    await Sorov.objects.filter(pk=sorov_id).aupdate(admin_msg_id=msg_id)
+    Sorov.objects.filter(pk=sorov_id).update(admin_msg_id=msg_id)
 
 
-async def get_sorov_by_sup_msg_id(msg_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_sorov_by_sup_msg_id(msg_id: int) -> tuple | None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    s = await Sorov.objects.filter(sup_msg_id=msg_id).afirst()
+    s = Sorov.objects.filter(sup_msg_id=msg_id).first()
     return s.as_tuple() if s else None
 
 
-async def get_sorov_by_admin_msg_id(msg_id: int) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_sorov_by_admin_msg_id(msg_id: int) -> tuple | None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    s = await Sorov.objects.filter(admin_msg_id=msg_id).afirst()
+    s = Sorov.objects.filter(admin_msg_id=msg_id).first()
     return s.as_tuple() if s else None
 
 
-async def update_sorov_group_id(sorov_id: int, group_chat_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def update_sorov_group_id(sorov_id: int, group_chat_id: int) -> None:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    await Sorov.objects.filter(pk=sorov_id).aupdate(group_id=group_chat_id)
+    Sorov.objects.filter(pk=sorov_id).update(group_id=group_chat_id)
 
 
 # ── Supervisor ↔ Group ─────────────────────────────────────────────────────────
-async def set_supervisor_group(supervisor_id: int, group_chat_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def set_supervisor_group(supervisor_id: int, group_chat_id: int) -> None:
     (_, _, _, _, _, _, _, _, _, _, _, SupervisorGroup, *_) = _models()
-    await SupervisorGroup.objects.aupdate_or_create(
+    SupervisorGroup.objects.update_or_create(
         supervisor_id=supervisor_id,
         defaults={"group_chat_id": group_chat_id},
     )
 
 
-async def get_supervisor_group(supervisor_id: int) -> int | None:
+def _sync_get_supervisor_group(supervisor_id: int) -> int | None:
     (_, _, _, _, _, _, _, _, _, _, _, SupervisorGroup, *_) = _models()
-    row = await SupervisorGroup.objects.filter(
+    return SupervisorGroup.objects.filter(
         supervisor_id=supervisor_id
-    ).values_list("group_chat_id", flat=True).afirst()
-    return row
+    ).values_list("group_chat_id", flat=True).first()
 
 
-async def delete_supervisor_group(supervisor_id: int) -> None:
+@sync_to_async(thread_sensitive=False)
+def get_supervisor_group(supervisor_id: int) -> int | None:
+    return _sync_get_supervisor_group(supervisor_id)
+
+
+@sync_to_async(thread_sensitive=False)
+def delete_supervisor_group(supervisor_id: int) -> None:
     (_, _, _, _, _, _, _, _, _, _, _, SupervisorGroup, *_) = _models()
-    await SupervisorGroup.objects.filter(supervisor_id=supervisor_id).adelete()
+    SupervisorGroup.objects.filter(supervisor_id=supervisor_id).delete()
 
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
-async def insert_audit_log(user_id: int, user_role: str, action_type: str,
-                            target: str | None = None, old_value: str | None = None,
-                            new_value: str | None = None, status: str | None = None,
-                            request_id: int | None = None) -> None:
+@sync_to_async(thread_sensitive=False)
+def insert_audit_log(user_id: int, user_role: str, action_type: str,
+                     target: str | None = None, old_value: str | None = None,
+                     new_value: str | None = None, status: str | None = None,
+                     request_id: int | None = None) -> None:
     (_, _, _, _, _, _, _, _, _, _, _, _, _, AuditLog, _) = _models()
-    await AuditLog.objects.acreate(
+    AuditLog.objects.create(
         user_id=user_id, user_role=user_role, action_type=action_type,
         target=target, old_value=old_value, new_value=new_value,
         status=status, request_id=request_id,
     )
 
 
-async def get_audit_logs(
+@sync_to_async(thread_sensitive=False)
+def get_audit_logs(
     filter_type: str = "all",
     date_filter: str = "all",
     limit: int = 5,
@@ -1016,7 +1152,7 @@ async def get_audit_logs(
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     params += [limit + 1, offset]   # +1 → keyingi sahifa bor-yo'qligini bilish uchun
 
-    return await _raw_all(f"""
+    return _sync_raw_all(f"""
         SELECT a.id, a.user_id, a.user_role, a.action_type, a.target,
                a.old_value, a.new_value, a.status, a.request_id, a.created_at,
                x.ism
@@ -1028,45 +1164,56 @@ async def get_audit_logs(
 
 
 # ── Instruksiyalar ────────────────────────────────────────────────────────────
-async def get_instruksiya(lavozim: str) -> tuple | None:
+@sync_to_async(thread_sensitive=False)
+def get_instruksiya(lavozim: str) -> tuple | None:
     (_, _, _, _, _, _, _, _, _, _, _, _, _, _, Instruksiya) = _models()
     try:
-        i = await Instruksiya.objects.aget(lavozim=lavozim)
+        i = Instruksiya.objects.get(lavozim=lavozim)
         return (i.matn, i.media_type, i.media_file_id)
     except Instruksiya.DoesNotExist:
         return None
 
 
-async def set_instruksiya(lavozim: str, matn: str | None,
-                          media_type: str | None = None,
-                          media_file_id: str | None = None) -> None:
+@sync_to_async(thread_sensitive=False)
+def set_instruksiya(lavozim: str, matn: str | None,
+                    media_type: str | None = None,
+                    media_file_id: str | None = None) -> None:
     (_, _, _, _, _, _, _, _, _, _, _, _, _, _, Instruksiya) = _models()
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    await Instruksiya.objects.aupdate_or_create(
+    Instruksiya.objects.update_or_create(
         lavozim=lavozim,
         defaults={"matn": matn, "media_type": media_type,
                   "media_file_id": media_file_id, "updated_at": updated_at},
     )
 
 
+@sync_to_async(thread_sensitive=False)
+def delete_instruksiya(lavozim: str) -> None:
+    (_, _, _, _, _, _, _, _, _, _, _, _, _, _, Instruksiya) = _models()
+    Instruksiya.objects.filter(lavozim=lavozim).delete()
+
+
 # ── Excel export ───────────────────────────────────────────────────────────────
-async def get_xabar_guruhi_for_excel() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_xabar_guruhi_for_excel() -> list:
     (_, _, XabarGuruhi, *_) = _models()
-    return [row async for row in XabarGuruhi.objects.order_by("-id").values_list(
+    return list(XabarGuruhi.objects.order_by("-id").values_list(
         "id", "user_id", "ism", "filial", "topic_id", "holat", "urgency", "vaqt", "javob_vaqt"
-    )]
+    ))
 
 
-async def get_sorovlar_for_excel() -> list:
+@sync_to_async(thread_sensitive=False)
+def get_sorovlar_for_excel() -> list:
     (_, _, _, _, _, _, _, _, _, _, Sorov, *_) = _models()
-    return [row async for row in Sorov.objects.order_by("-id").values_list(
+    return list(Sorov.objects.order_by("-id").values_list(
         "id", "agent_id", "agent_ism", "tur", "dokon_nomi", "yangi_qiymat",
         "lat", "lon", "izoh", "status", "sana"
-    )]
+    ))
 
 
-async def get_baholash_for_excel() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_baholash_for_excel() -> list:
+    return _sync_raw_all("""
         SELECT b.id, b.group_id,
                b.checker_id, c.ism AS checker_ism,
                b.agent_id,  a.ism AS agent_ism,
@@ -1078,8 +1225,9 @@ async def get_baholash_for_excel() -> list:
     """)
 
 
-async def get_audit_log_for_excel() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_audit_log_for_excel() -> list:
+    return _sync_raw_all("""
         SELECT a.id, a.user_id, x.ism, a.user_role, a.action_type,
                a.target, a.old_value, a.new_value, a.status, a.created_at
         FROM audit_log a
@@ -1088,8 +1236,9 @@ async def get_audit_log_for_excel() -> list:
     """)
 
 
-async def get_all_klientlar_full_for_excel() -> list:
-    return await _raw_all("""
+@sync_to_async(thread_sensitive=False)
+def get_all_klientlar_full_for_excel() -> list:
+    return _sync_raw_all("""
         SELECT id, firma_nomi, telefon1, telefon2, inn, orienter,
                lokatsiya_lat, lokatsiya_lon, lokatsiya_address,
                kategoriya, dokon_turi, distributor, agent_kod,
@@ -1099,13 +1248,48 @@ async def get_all_klientlar_full_for_excel() -> list:
     """)
 
 
-async def get_full_db_for_excel() -> dict:
-    xodimlar    = await get_all_xodimlar_for_excel()
-    sorovlar    = await get_sorovlar_for_excel()
-    klientlar   = await get_all_klientlar_full_for_excel()
-    biriktirish = await get_all_biriktirish_detailed()
-    baholash    = await get_baholash_for_excel()
-    audit_log   = await get_audit_log_for_excel()
+@sync_to_async(thread_sensitive=False)
+def get_full_db_for_excel() -> dict:
+    xodimlar    = list(__import__("bot_app.models", fromlist=["Xodim"]).Xodim.objects.all().values_list(
+        "user_id", "ism", "lavozim", "kod", "filial",
+        "telefon1", "telefon2", "tugilgan_kun", "status", "sana"
+    ))
+    sorovlar    = list(__import__("bot_app.models", fromlist=["Sorov"]).Sorov.objects.order_by("-id").values_list(
+        "id", "agent_id", "agent_ism", "tur", "dokon_nomi", "yangi_qiymat",
+        "lat", "lon", "izoh", "status", "sana"
+    ))
+    klientlar   = _sync_raw_all("""
+        SELECT id, firma_nomi, telefon1, telefon2, inn, orienter,
+               lokatsiya_lat, lokatsiya_lon, lokatsiya_address,
+               kategoriya, dokon_turi, distributor, agent_kod,
+               vizit_kun, chastota, limit_summa, brendlar,
+               status, reject_reason, sana, supervisor_id
+        FROM klientlar ORDER BY id DESC
+    """)
+    biriktirish = _sync_raw_all("""
+        SELECT b.agent_id, a.ism, b.checker_id, c.ism, a.filial, a.status
+        FROM biriktirish b
+        JOIN xodimlar a ON a.user_id = b.agent_id
+        LEFT JOIN xodimlar c ON c.user_id = b.checker_id
+        ORDER BY a.ism
+    """)
+    baholash    = _sync_raw_all("""
+        SELECT b.id, b.group_id,
+               b.checker_id, c.ism AS checker_ism,
+               b.agent_id,  a.ism AS agent_ism,
+               b.yulduz, b.vaqt
+        FROM baholash b
+        LEFT JOIN xodimlar c ON c.user_id = b.checker_id
+        LEFT JOIN xodimlar a ON a.user_id = b.agent_id
+        ORDER BY b.id DESC
+    """)
+    audit_log   = _sync_raw_all("""
+        SELECT a.id, a.user_id, x.ism, a.user_role, a.action_type,
+               a.target, a.old_value, a.new_value, a.status, a.created_at
+        FROM audit_log a
+        LEFT JOIN xodimlar x ON x.user_id = a.user_id
+        ORDER BY a.id DESC
+    """)
     return {
         "xodimlar":     xodimlar,
         "topshiriqlar": sorovlar,
