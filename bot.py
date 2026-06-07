@@ -140,6 +140,16 @@ def _make_request():
     # PythonAnywhere barcha tashqi ulanishlar uchun proksi talab qiladi
     if not proxy and os.environ.get("PYTHONANYWHERE_SITE"):
         proxy = "http://proxy.server:3128"
+    # PythonAnywhere: domain nomidan ham aniqlaymiz
+    if not proxy:
+        import socket
+        try:
+            hostname = socket.gethostname()
+            if "pythonanywhere" in hostname.lower():
+                proxy = "http://proxy.server:3128"
+        except Exception:
+            pass
+
     if proxy:
         logger.info(f"Proksi ishlatilmoqda: {proxy}")
         return HTTPXRequest(
@@ -369,6 +379,10 @@ def build_application(webhook_mode: bool = False, post_init_cb=None) -> Applicat
     )
     app.add_handler(add_admin_conv)
 
+    async def _ping(update: Update, _ctx) -> None:
+        await update.message.reply_text("pong ✅")
+
+    app.add_handler(CommandHandler("ping", _ping))
     app.add_handler(CommandHandler("upload_db",   admin_upload_db))
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("db"),
