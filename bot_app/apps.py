@@ -95,16 +95,29 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
 
             _dbg("[init] app.initialize() boshlandi")
             await asyncio.wait_for(app.initialize(), timeout=60)
-            _dbg("[init] app.initialize() tugadi — app.start() boshlandi")
+            _dbg("[init] app.initialize() tugadi — app.start() background task")
 
-            # wait_for ishlatilmaydi: cancellation cleanup ham hang qiladi
-            await app.start()
+            # app.start() ni background task sifatida ishga tushiramiz.
+            # PTB/Python 3.13 da create_task(_update_fetcher) qatorida hang bo'ladi.
+            # Webhook mode da _update_fetcher kerak emas — process_update to'g'ridan
+            # chaqiriladi. Biz faqat _running=True va scheduler ishga tushishini kutamiz.
+            asyncio.ensure_future(app.start())
 
-            _dbg("[init] app.start() tugadi")
+            # _running = True app.start() boshlanishi bilan o'rnatiladi (await dan oldin).
+            # Scheduler started chiqishi bilan job queue ham tayyor.
+            # Shundan keyin bot webhook uchun tayyor hisoblanadi.
+            deadline = asyncio.get_event_loop().time() + 10
+            while not app.running:
+                if asyncio.get_event_loop().time() > deadline:
+                    logger.warning("app.start() 10s ichida _running o'rnatmadi — majburan davom etilmoqda")
+                    app._running = True
+                    break
+                await asyncio.sleep(0.1)
+
+            _dbg(f"[init] app.running={app.running} — _app o'rnatilmoqda")
             _app  = app
             _loop = my_loop
             logger.info(f"Bot tayyor (pid={os.getpid()}).")
-            _dbg(f"[init] Bot tayyor pid={os.getpid()}")
             return
 
         except Exception as e:
