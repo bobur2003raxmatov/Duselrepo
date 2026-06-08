@@ -91,6 +91,7 @@ from handlers import (
     klient_limit, klient_confirm, klient_edit_value,
     admin_klientlar,
     klient_reject_reason,
+    mening_klientlarim_handler, mk_page_cb, mk_view_cb,
     admin_tarix, tarix_filter_callback,
     topic_closed_handler,
     admin_upload_db,
@@ -397,10 +398,14 @@ def build_application(webhook_mode: bool = False, post_init_cb=None) -> Applicat
         topic_closed_handler,
     ))
 
-    _faq_f       = BuyruqFilter("faq", defaults=("📋 FAQ",))
-    _matn_javob_f = BuyruqFilter("matn_javob")
+    _faq_f            = BuyruqFilter("faq", defaults=("📋 FAQ",))
+    _matn_javob_f     = BuyruqFilter("matn_javob")
+    _mk_f             = BuyruqFilter("mening_klientlarim", defaults=("🏪 Mening klientlarim",))
     app.add_handler(MessageHandler(_faq_f, faq_start))
     app.add_handler(MessageHandler(_matn_javob_f, matn_javob_handler))
+    app.add_handler(MessageHandler(_mk_f, mening_klientlarim_handler))
+    app.add_handler(CallbackQueryHandler(mk_page_cb, pattern=r"^mk_page_|^mk_noop$"))
+    app.add_handler(CallbackQueryHandler(mk_view_cb, pattern=r"^mk_view_"))
     app.add_handler(CallbackQueryHandler(sorov_sup_callback, pattern=r"^sorov_appr_|^sorov_rej_|^sorov_done_|^sorov_rad_"))
     app.add_handler(CallbackQueryHandler(tarix_filter_callback, pattern=r"^tarix_[fdp]_|^tarix_noop$"))
     app.add_handler(CallbackQueryHandler(batch_callback, pattern=r"^batch_"))
