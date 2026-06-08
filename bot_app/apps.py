@@ -8,14 +8,13 @@ from django.apps import AppConfig
 
 logger = logging.getLogger(__name__)
 
-_app   = None
-_loop  = None
-_ready = False
+_app          = None
+_loop         = None
+_ready        = False
 _restart_lock = threading.Lock()
 
 
 def _log(msg: str) -> None:
-    """Xabarni ham print (uWSGI stdout/stderr), ham logger orqali chiqaradi."""
     print(f"[bot_app] {msg}", flush=True)
     logger.warning(msg)
 
@@ -29,25 +28,20 @@ def get_bot_loop():
 
 
 def _bot_thread_alive() -> bool:
-    """'telegram-bot' nomli daemon thread hali ishlayaptimi?"""
     return any(t.name == "telegram-bot" and t.is_alive() for t in threading.enumerate())
 
 
 def ensure_bot_running() -> bool:
-    """Loop o'lik yoki fork dan keyin ishlamayotgan bo'lsa, qayta ishga tushiradi.
-    True qaytarsa bot allaqachon tayyor; False qaytarsa hali initializatsiya bo'lmagan.
-    """
+    """Fork dan keyin yoki loop o'lib qolsa bot threadni qayta ishga tushiradi."""
     current_loop = _loop
     if current_loop is not None and current_loop.is_running():
         return _app is not None
     if _bot_thread_alive():
-        # Thread allaqachon ishlamoqda — init hali tugamagan
         return False
     with _restart_lock:
-        # Double-check inside the lock
         if _bot_thread_alive():
             return False
-        _log(f"[ensure] bot thread yo'q (fork?) — qayta ishga tushirilmoqda pid={os.getpid()}")
+        _log(f"[ensure] bot thread yo'q — qayta ishga tushirilmoqda pid={os.getpid()}")
         _start_bot_thread()
     return False
 
@@ -78,32 +72,43 @@ def _register_postfork_or_start():
 
         @uwsgidecorators.postfork
         def _postfork():
-            if not os.environ.get("TOKEN"):
-                return
-            _log(f"[postfork] pid={os.getpid()} — bot ishga tushmoqda")
-            _start_bot_thread()
+            try:
+                if not os.environ.get("TOKEN"):
+                    return
+                _log(f"[postfork] pid={os.getpid()} — bot thread boshlanmoqda")
+                _start_bot_thread()
+            except Exception as exc:
+                _log(f"[postfork] XATO (ignored): {exc!r}")
 
-        _log("uWSGI postfork hook royxatdan otdi.")
+        _log("uWSGI postfork hook ro'yxatdan o'tdi.")
     except ImportError:
-        _start_bot_thread()
+        try:
+            _start_bot_thread()
+        except Exception as exc:
+            _log(f"[start_bot_thread] XATO (ignored): {exc!r}")
 
 
 def _start_bot_thread():
+    """Bot daemon threadini ishga tushiradi. Hech qanday bloklovchi amal yo'q."""
     global _app, _loop
     _app  = None
     _loop = None
-    loop = asyncio.new_event_loop()
-    t = threading.Thread(target=loop.run_forever, daemon=True, name="telegram-bot")
+
+    def _thread_main():
+        # BARCHA asyncio amallari shu daemon thread ichida — asosiy threadni bloklamaydi
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # loop.run_forever() boshlanishidan oldin init coroutineni queue ga qo'shamiz
+            loop.call_soon(lambda: loop.create_task(_init_bot_async(loop)))
+            loop.run_forever()
+        except Exception as exc:
+            _log(f"[bot-thread] FATAL: {exc!r}")
+
+    t = threading.Thread(target=_thread_main, daemon=True, name="telegram-bot")
     t.start()
-    # loop.is_running() becomes True once run_forever() enters the loop.
-    # Give it a moment before scheduling the init coroutine.
-    import time
-    for _ in range(20):
-        if loop.is_running():
-            break
-        time.sleep(0.05)
-    asyncio.run_coroutine_threadsafe(_init_bot_async(loop), loop)
     _log(f"Bot thread ishga tushirildi (pid={os.getpid()}).")
+    # MUHIM: hech qanday sleep yo'q — darhol qaytadi
 
 
 async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
@@ -121,7 +126,6 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
         try:
             _log(f"[init] urinish {attempt + 1}/6  pid={os.getpid()}")
 
-            # post_init_cb=None — biz qolda chaqiramiz (initialize() chaqirmaydi)
             app = build_application(webhook_mode=True)
             app.add_error_handler(error_handler)
 
@@ -129,29 +133,25 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             await asyncio.wait_for(app.initialize(), timeout=60)
             _log("[init] app.initialize() OK")
 
-            # PTB initialize() post_init'ni chaqirmaydi — qolda chaqiramiz
             _log("[init] post_init_webhook() ...")
             await asyncio.wait_for(post_init_webhook(app), timeout=30)
             _log("[init] post_init_webhook() OK")
 
             # APScheduler ni executor threadda ishga tushir
-            # (event loop ichidan call_soon_threadsafe → deadlock oldini olish)
             if app.job_queue:
                 scheduler = app.job_queue.scheduler
                 scheduler._eventloop = my_loop
-
-                _log("[init] scheduler executor threadda ishlamoqda...")
+                _log("[init] scheduler ishga tushmoqda...")
                 try:
                     await asyncio.wait_for(
                         asyncio.get_running_loop().run_in_executor(None, scheduler.start),
                         timeout=15,
                     )
                     _log("[init] scheduler OK")
-                except (asyncio.TimeoutError, Exception) as se:
-                    _log(f"[init] scheduler xato: {se!r} — job queue ochirildi")
+                except Exception as se:
+                    _log(f"[init] scheduler xato: {se!r} — job queue o'chirildi")
                     app._job_queue = None
 
-            # app.start() orniga minimal sozlash
             app._running = True
             _log("[init] app._running = True")
 
@@ -162,7 +162,6 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
                 except Exception as pe:
                     _log(f"[init] persistence_updater xato (ignored): {pe}")
 
-            # Webhook URLni fon da ornating (bloklamaydi, xato bosa ignored)
             if WEBHOOK_URL:
                 full_wh_url = f"{WEBHOOK_URL}/webhook/{TOKEN}/"
                 asyncio.create_task(_set_webhook_safe(app, full_wh_url))
@@ -174,10 +173,7 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
 
         except Exception as e:
             delay = 2 ** attempt
-            _log(
-                f"[init] XATO urinish {attempt + 1}/6: "
-                f"{type(e).__name__}: {e} — {delay}s kutiladi"
-            )
+            _log(f"[init] XATO {attempt + 1}/6: {type(e).__name__}: {e} — {delay}s kutiladi")
             if app is not None:
                 try:
                     await asyncio.wait_for(app.shutdown(), timeout=5)
@@ -189,7 +185,6 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
 
 
 async def _set_webhook_safe(app, url: str) -> None:
-    """Webhook URLni Telegram ga ornating. Xato bosa — e'tibor berma."""
     from telegram import Update
     try:
         await asyncio.wait_for(

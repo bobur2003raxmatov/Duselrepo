@@ -1731,9 +1731,7 @@ async def admin_instruksiya_del_cb(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
     lavozim = query.data[len("instr_del_"):]
     context.user_data.pop("instr_lavozim", None)
-    async with __import__("database").get_db() as conn:
-        await conn.execute("DELETE FROM instruksiyalar WHERE lavozim=?", (lavozim,))
-        await conn.commit()
+    await db.delete_instruksiya(lavozim)
     await query.edit_message_text(
         f"🗑 *{lavozim}* instruksiyasi o'chirildi.",
         parse_mode="Markdown",
