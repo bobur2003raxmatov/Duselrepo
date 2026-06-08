@@ -474,15 +474,22 @@ async def _apply_slash_commands(bot) -> None:
 
 
 async def refresh_menus_job(context) -> None:
-    """Har 30 soniyada DB dan menyu keshi va slash buyruqlarni yangilaydi."""
+    """Har 60 soniyada DB dan menyu keshini yangilaydi (Telegram API chaqirilmaydi)."""
     from database import get_all_active_tugmalar
     from handlers.menu_dispatch import refresh_menu_cache
     try:
         tugmalar = await get_all_active_tugmalar()
         refresh_menu_cache(tugmalar)
-        await _apply_slash_commands(context.bot)
     except Exception as e:
         logger.warning(f"[refresh_menus_job] xato: {e}")
+
+
+async def refresh_commands_job(context) -> None:
+    """Har 10 daqiqada Telegram slash buyruqlarini yangilaydi."""
+    try:
+        await _apply_slash_commands(context.bot)
+    except Exception as e:
+        logger.warning(f"[refresh_commands_job] xato: {e}")
 
 
 async def post_init(app: Application):
@@ -545,13 +552,11 @@ async def post_init(app: Application):
     )
     logger.info("✅ Kutilayotgan so'rovlar tekshiruvi rejalashtirildi: har 5 daqiqa")
 
-    # Menyu keshi + slash buyruqlarini har 30 soniyada yangilash
-    app.job_queue.run_repeating(
-        refresh_menus_job,
-        interval=30,
-        first=30,
-    )
-    logger.info("✅ Menyu avtomatik yangilanishi rejalashtirildi: har 30 soniya")
+    # Menyu keshi har 60 soniyada (API chaqirivsiz)
+    app.job_queue.run_repeating(refresh_menus_job, interval=60, first=60)
+    # Slash buyruqlar har 10 daqiqada (Telegram API)
+    app.job_queue.run_repeating(refresh_commands_job, interval=600, first=600)
+    logger.info("✅ Menyu keshi: har 60s | Slash buyruqlar: har 10 daqiqa")
 
 
 async def post_init_webhook(app: Application):
@@ -585,7 +590,8 @@ async def post_init_webhook(app: Application):
         time=datetime.time(hour=17, minute=0, tzinfo=tz_uz),
     )
     app.job_queue.run_repeating(pending_sorovlar_alert_job, interval=300, first=300)
-    app.job_queue.run_repeating(refresh_menus_job, interval=30, first=10)
+    app.job_queue.run_repeating(refresh_menus_job, interval=60, first=10)
+    app.job_queue.run_repeating(refresh_commands_job, interval=600, first=600)
     logger.info("✅ Bot (webhook worker) tayyor — tezlashtirilgan init.")
 
 
