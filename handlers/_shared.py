@@ -148,19 +148,6 @@ def safe_callback_int(data: str, sep: str = "_", index: int = -1) -> int | None:
         return None
 
 
-def _role_keyboard(lavozim: str):
-    """Return the correct reply keyboard based on role."""
-    if lavozim == "Agent":
-        return agent_kb()
-    if lavozim == "Filial Rahbari":
-        return filial_rahbari_kb()
-    if lavozim == "Operator":
-        return operator_kb()
-    if lavozim == "Distribyutor":
-        return distribyutor_kb()
-    return supervisor_kb()
-
-
 def _schedule_sla(context, group_id: int, ism: str):
     """15 va 30 daqiqali SLA eslatmalarini rejalashtiradi."""
     context.job_queue.run_once(
