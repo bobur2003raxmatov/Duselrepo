@@ -123,6 +123,7 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
 
     for attempt in range(6):
         app = None
+        started = False
         try:
             _log(f"[init] urinish {attempt + 1}/6  pid={os.getpid()}")
 
@@ -137,30 +138,10 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             await asyncio.wait_for(post_init_webhook(app), timeout=30)
             _log("[init] post_init_webhook() OK")
 
-            # APScheduler ni executor threadda ishga tushir
-            if app.job_queue:
-                scheduler = app.job_queue.scheduler
-                scheduler._eventloop = my_loop
-                _log("[init] scheduler ishga tushmoqda...")
-                try:
-                    await asyncio.wait_for(
-                        asyncio.get_running_loop().run_in_executor(None, scheduler.start),
-                        timeout=15,
-                    )
-                    _log("[init] scheduler OK")
-                except Exception as se:
-                    _log(f"[init] scheduler xato: {se!r} — job queue o'chirildi")
-                    app._job_queue = None
-
-            app._running = True
-            _log("[init] app._running = True")
-
-            if app.persistence:
-                try:
-                    asyncio.create_task(app._persistence_updater())
-                    _log("[init] persistence_updater yaratildi")
-                except Exception as pe:
-                    _log(f"[init] persistence_updater xato (ignored): {pe}")
+            _log("[init] app.start() ...")
+            await asyncio.wait_for(app.start(), timeout=30)
+            started = True
+            _log("[init] app.start() OK — job queue va update processor ishlamoqda")
 
             if WEBHOOK_URL:
                 full_wh_url = f"{WEBHOOK_URL}/webhook/{TOKEN}/"
@@ -176,6 +157,8 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             _log(f"[init] XATO {attempt + 1}/6: {type(e).__name__}: {e} — {delay}s kutiladi")
             if app is not None:
                 try:
+                    if started:
+                        await asyncio.wait_for(app.stop(), timeout=5)
                     await asyncio.wait_for(app.shutdown(), timeout=5)
                 except Exception:
                     pass

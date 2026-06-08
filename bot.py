@@ -560,12 +560,7 @@ async def post_init(app: Application):
 
 
 async def post_init_webhook(app: Application):
-    """uWSGI worker restart uchun tezlashtirilgan init.
-
-    Telegram API chaqiruvlari (set_my_commands, set_chat_permissions, set_webhook)
-    o'tkazib yuboriladi — ular birinchi ishga tushirilganda yoki refresh_menus_job
-    orqali har 30 soniyada bir marta bajariladi. Bu init ~0.3s da tugaydi.
-    """
+    """Webhook worker uchun init: DB, menyu keshi, job queue."""
     await init_db()
     try:
         from database import get_all_active_tugmalar

@@ -649,8 +649,8 @@ def delete_faq_kategoriya(kategoriya_id: int):
 
 
 # ── Bot menyular ──────────────────────────────────────────────────────────────
-def sync_get_all_active_tugmalar() -> list:
-    """Sync: barcha faol BotTugma yozuvlarini qaytaradi (thread pool uchun)."""
+@sync_to_async(thread_sensitive=False)
+def get_all_active_tugmalar() -> list:
     from bot_app.models import BotTugma
     return list(
         BotTugma.objects.select_related("rol").filter(faol=True, rol__faol=True).order_by("rol__lavozim", "qator", "ustun")
@@ -658,14 +658,7 @@ def sync_get_all_active_tugmalar() -> list:
 
 
 @sync_to_async(thread_sensitive=False)
-def get_all_active_tugmalar() -> list:
-    """Async: barcha faol BotTugma yozuvlarini qaytaradi (event loop uchun)."""
-    return sync_get_all_active_tugmalar()
-
-
-@sync_to_async(thread_sensitive=False)
 def get_tugma_by_matn(matn: str) -> object | None:
-    """Matn bo'yicha faol BotTugma ni qaytaradi."""
     from bot_app.models import BotTugma
     try:
         return BotTugma.objects.select_related("rol").get(matn=matn, faol=True, rol__faol=True)
@@ -673,16 +666,10 @@ def get_tugma_by_matn(matn: str) -> object | None:
         return None
 
 
-def sync_get_all_slash_buyruqlar() -> list:
-    """Sync: barcha faol BotSlashBuyruq larni qaytaradi (thread pool uchun)."""
-    from bot_app.models import BotSlashBuyruq
-    return list(BotSlashBuyruq.objects.filter(faol=True).order_by("tartib", "buyruq"))
-
-
 @sync_to_async(thread_sensitive=False)
 def get_all_slash_buyruqlar() -> list:
-    """Async: barcha faol BotSlashBuyruq larni qaytaradi (event loop uchun)."""
-    return sync_get_all_slash_buyruqlar()
+    from bot_app.models import BotSlashBuyruq
+    return list(BotSlashBuyruq.objects.filter(faol=True).order_by("tartib", "buyruq"))
 
 
 # ── Urgency ───────────────────────────────────────────────────────────────────
