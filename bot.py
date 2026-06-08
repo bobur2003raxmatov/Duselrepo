@@ -473,12 +473,12 @@ async def _apply_slash_commands(bot) -> None:
     logger.info(f"✅ Slash buyruqlar yangilandi: {len(default_cmds)} umumiy, {len(admin_cmds)} admin.")
 
 
-async def refresh_menus_job(context) -> None:
-    """Har 60 soniyada DB dan menyu keshini yangilaydi (Telegram API chaqirilmaydi)."""
-    from database import get_all_active_tugmalar
+def refresh_menus_job(context) -> None:
+    """Har 60 soniyada DB dan menyu keshini yangilaydi (PTB thread pool'da ishlaydi)."""
+    from database import sync_get_all_active_tugmalar
     from handlers.menu_dispatch import refresh_menu_cache
     try:
-        tugmalar = await get_all_active_tugmalar()
+        tugmalar = sync_get_all_active_tugmalar()
         refresh_menu_cache(tugmalar)
     except Exception as e:
         logger.warning(f"[refresh_menus_job] xato: {e}")

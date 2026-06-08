@@ -649,13 +649,18 @@ def delete_faq_kategoriya(kategoriya_id: int):
 
 
 # ── Bot menyular ──────────────────────────────────────────────────────────────
-@sync_to_async(thread_sensitive=False)
-def get_all_active_tugmalar() -> list:
-    """Barcha faol BotTugma yozuvlarini qaytaradi (rol bilan birga)."""
+def sync_get_all_active_tugmalar() -> list:
+    """Sync: barcha faol BotTugma yozuvlarini qaytaradi (thread pool uchun)."""
     from bot_app.models import BotTugma
     return list(
         BotTugma.objects.select_related("rol").filter(faol=True, rol__faol=True).order_by("rol__lavozim", "qator", "ustun")
     )
+
+
+@sync_to_async(thread_sensitive=False)
+def get_all_active_tugmalar() -> list:
+    """Async: barcha faol BotTugma yozuvlarini qaytaradi (event loop uchun)."""
+    return sync_get_all_active_tugmalar()
 
 
 @sync_to_async(thread_sensitive=False)
@@ -668,11 +673,16 @@ def get_tugma_by_matn(matn: str) -> object | None:
         return None
 
 
-@sync_to_async(thread_sensitive=False)
-def get_all_slash_buyruqlar() -> list:
-    """Barcha faol BotSlashBuyruq larni qaytaradi."""
+def sync_get_all_slash_buyruqlar() -> list:
+    """Sync: barcha faol BotSlashBuyruq larni qaytaradi (thread pool uchun)."""
     from bot_app.models import BotSlashBuyruq
     return list(BotSlashBuyruq.objects.filter(faol=True).order_by("tartib", "buyruq"))
+
+
+@sync_to_async(thread_sensitive=False)
+def get_all_slash_buyruqlar() -> list:
+    """Async: barcha faol BotSlashBuyruq larni qaytaradi (event loop uchun)."""
+    return sync_get_all_slash_buyruqlar()
 
 
 # ── Urgency ───────────────────────────────────────────────────────────────────
