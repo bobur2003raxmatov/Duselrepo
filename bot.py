@@ -559,13 +559,13 @@ async def post_init(app: Application):
     logger.info("✅ Menyu keshi: har 60s | Slash buyruqlar: har 10 daqiqa")
 
 
-async def post_init_webhook(app: Application):
-    """Webhook worker uchun init: DB, menyu keshi, job queue."""
-    await init_db()
+def post_init_webhook(app: Application):
+    """Webhook worker uchun sync init (thread pool'da chaqiriladi)."""
+    from database import _sync_init_db, _sync_get_all_active_tugmalar
+    from handlers.menu_dispatch import refresh_menu_cache
+    _sync_init_db()
     try:
-        from database import get_all_active_tugmalar
-        from handlers.menu_dispatch import refresh_menu_cache
-        tugmalar = await get_all_active_tugmalar()
+        tugmalar = _sync_get_all_active_tugmalar()
         refresh_menu_cache(tugmalar)
     except Exception as e:
         logger.warning(f"Bot menyu keshini yuklashda xato: {e}")
@@ -587,7 +587,7 @@ async def post_init_webhook(app: Application):
     app.job_queue.run_repeating(pending_sorovlar_alert_job, interval=300, first=300)
     app.job_queue.run_repeating(refresh_menus_job, interval=60, first=10)
     app.job_queue.run_repeating(refresh_commands_job, interval=600, first=600)
-    logger.info("✅ Bot (webhook worker) tayyor — tezlashtirilgan init.")
+    logger.info("✅ Bot (webhook worker) tayyor — sync init.")
 
 
 async def error_handler(update: object, context) -> None:

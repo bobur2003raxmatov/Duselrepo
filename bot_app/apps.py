@@ -135,7 +135,10 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             _log("[init] app.initialize() OK")
 
             _log("[init] post_init_webhook() ...")
-            await asyncio.wait_for(post_init_webhook(app), timeout=30)
+            await asyncio.wait_for(
+                my_loop.run_in_executor(None, post_init_webhook, app),
+                timeout=30,
+            )
             _log("[init] post_init_webhook() OK")
 
             _log("[init] app.start() ...")

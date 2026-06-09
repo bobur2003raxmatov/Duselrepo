@@ -67,15 +67,15 @@ def set_db_version(version: int) -> None:
 
 
 # ── init_db (Django migratsiyalar manage.py migrate orqali bajariladi) ───────
-@sync_to_async(thread_sensitive=False)
-def init_db():
-    """
-    Jadvallar manage.py migrate orqali yaratiladi.
-    Bu funksiya faqat xotira keshini to'ldiradi va asosiy adminni qo'shadi.
-    """
+def _sync_init_db():
     (_, _, _, _, _, _, _, _, _, _, _, _, AdminUser, _, _) = _models()
     AdminUser.objects.get_or_create(user_id=ADMIN_ID)
     _sync_reload_admin_cache()
+
+
+@sync_to_async(thread_sensitive=False)
+def init_db():
+    _sync_init_db()
 
 
 # ── Adminlar keshi ────────────────────────────────────────────────────────────
@@ -649,12 +649,16 @@ def delete_faq_kategoriya(kategoriya_id: int):
 
 
 # ── Bot menyular ──────────────────────────────────────────────────────────────
-@sync_to_async(thread_sensitive=False)
-def get_all_active_tugmalar() -> list:
+def _sync_get_all_active_tugmalar() -> list:
     from bot_app.models import BotTugma
     return list(
         BotTugma.objects.select_related("rol").filter(faol=True, rol__faol=True).order_by("rol__lavozim", "qator", "ustun")
     )
+
+
+@sync_to_async(thread_sensitive=False)
+def get_all_active_tugmalar() -> list:
+    return _sync_get_all_active_tugmalar()
 
 
 @sync_to_async(thread_sensitive=False)
