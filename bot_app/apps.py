@@ -17,6 +17,13 @@ _restart_lock = threading.Lock()
 def _log(msg: str) -> None:
     print(f"[bot_app] {msg}", flush=True)
     logger.warning(msg)
+    try:
+        import time
+        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_init.log")
+        with open(log_path, "a", buffering=1) as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
 
 
 def get_bot_app():
@@ -142,9 +149,9 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             _log("[init] post_init_webhook() OK")
 
             _log("[init] app.start() ...")
-            await asyncio.wait_for(app.start(), timeout=30)
+            await asyncio.wait_for(app.start(), timeout=60)
             started = True
-            _log("[init] app.start() OK — job queue va update processor ishlamoqda")
+            _log("[init] app.start() OK")
 
             if WEBHOOK_URL:
                 full_wh_url = f"{WEBHOOK_URL}/webhook/{TOKEN}/"
@@ -155,16 +162,20 @@ async def _init_bot_async(my_loop: asyncio.AbstractEventLoop):
             _log(f"[init] === BOT TAYYOR! pid={os.getpid()} ===")
             return
 
-        except Exception as e:
+        except BaseException as e:
             delay = 2 ** attempt
             _log(f"[init] XATO {attempt + 1}/6: {type(e).__name__}: {e} — {delay}s kutiladi")
             if app is not None:
                 try:
-                    if started:
-                        await asyncio.wait_for(app.stop(), timeout=5)
+                    await asyncio.wait_for(app.stop(), timeout=5)
+                except Exception:
+                    pass
+                try:
                     await asyncio.wait_for(app.shutdown(), timeout=5)
                 except Exception:
                     pass
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
             await asyncio.sleep(delay)
 
     _log(f"[init] Bot 6 urinishdan keyin ham ishlamadi! pid={os.getpid()}")
